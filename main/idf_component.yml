@@ -1,0 +1,6 @@
+dependencies:
+  espressif/esp_lvgl_port: "^2.9.0"
+  espressif/esp_lcd_touch_cst816s: "^1.1.2"
+  lvgl/lvgl:
+    version: "^9.4.0"
+    public: true
