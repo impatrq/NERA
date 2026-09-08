@@ -10,6 +10,11 @@ idf_component_register(
         # Módulo Core: estado global y comunicación
         "core/app_state.cpp"
         "core/event_bus.cpp"
+        "storage/storage_manager.cpp"
+        "services/health_service.cpp"
+        "services/sleep_service.cpp"
+        "power/power_manager.cpp"
+        "connectivity/ble_manager.cpp"
 
         # Módulo Display: driver ST7789T3 y control de backlight PWM
         "display/display_driver.cpp"
@@ -18,6 +23,7 @@ idf_component_register(
         "sensors/heart_rate/heart_rate_filter.cpp"
         "sensors/heart_rate/mock_heart_rate_sensor.cpp"
         "sensors/temperature/mock_temperature_sensor.cpp"
+        "sensors/battery/battery_manager.cpp"
 
         # Módulo LVGL: motor gráfico y tarea de UI
         "lvgl/lvgl_port.cpp"

@@ -193,3 +193,25 @@ void app_state_set_datetime(const NeraDateTime *dt) {
     memcpy(&s_state.datetime, dt, sizeof(NeraDateTime));
     state_unlock();
 }
+
+esp_err_t app_state_restore_heart_history(const float *history, uint8_t count) {
+    if (history == NULL || count > NERA_HISTORY_BUFFER_SIZE || !state_lock()) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    memcpy(s_state.heart_history, history, count * sizeof(float));
+    s_state.heart_history_count = count;
+    state_unlock();
+    return ESP_OK;
+}
+
+esp_err_t app_state_restore_temp_history(const float *history, uint8_t count) {
+    if (history == NULL || count > NERA_HISTORY_BUFFER_SIZE || !state_lock()) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    memcpy(s_state.temp_history, history, count * sizeof(float));
+    s_state.temp_history_count = count;
+    state_unlock();
+    return ESP_OK;
+}

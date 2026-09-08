@@ -94,6 +94,7 @@
 #define NERA_BL_MAX             255
 #define NERA_BL_MIN             10
 #define NERA_BL_DEFAULT         220
+#define NERA_BL_SAVER           40
 
 // =============================================================================
 // POWER MANAGEMENT

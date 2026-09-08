@@ -2,7 +2,7 @@
  * @file app_main.cpp
  * @brief Punto de entrada del firmware NERA.
  *
- * En esta Etapa 1B:
+ * Orquesta el arranque modular de NERA y sus tareas FreeRTOS:
  * - Se inicializa el sistema base (NVS, AppState, EventBus).
  * - Se inicializa el PWM de Backlight (LEDC) y se enciende la pantalla.
  * - Se inicializa el bus SPI con DMA y el controlador ST7789T3 (240x320 px).
@@ -27,38 +27,37 @@
 #include "utils/logger.h"
 #include "core/app_state.h"
 #include "core/event_bus.h"
+#include "storage/storage_manager.h"
+#include "services/sleep_service.h"
+#include "power/power_manager.h"
+#include "connectivity/ble_manager.h"
 #include "display/display_driver.h"
 #include "display/display_manager.h"
 #include "lvgl/lvgl_task.h"
 #include "sensors/heart_rate/heart_rate_filter.h"
 #include "sensors/heart_rate/mock_heart_rate_sensor.h"
 #include "sensors/temperature/mock_temperature_sensor.h"
+#include "sensors/battery/battery_manager.h"
 
 static const char *TAG = NERA_TAG_MAIN;
 static MockHeartRateSensor s_heart_rate_sensor;
 static HeartRateFilter s_heart_rate_filter;
 static MockTemperatureSensor s_temperature_sensor;
+static MockBatteryManager s_battery_manager;
 
 static void battery_mock_task(void *arg)
 {
     (void)arg;
-    uint8_t percentage = 100;
+    if (s_battery_manager.begin() != ESP_OK) {
+        NERA_LOGE(TAG, "No se pudo iniciar el gestor mock de bateria");
+        vTaskDelete(NULL);
+        return;
+    }
 
     while (true) {
-        NeraBatteryData battery = {};
-        battery.percentage = percentage;
-        battery.voltage_mv = 4200.0f - ((100.0f - percentage) * 12.0f);
-        battery.sensor_ok = true;
-        battery.state = percentage <= 5 ? NERA_BATTERY_CRITICAL :
-                        percentage <= 20 ? NERA_BATTERY_LOW :
-                        percentage >= 100 ? NERA_BATTERY_FULL :
-                        NERA_BATTERY_DISCHARGING;
-        app_state_set_battery(&battery);
-
-        if (percentage > 10) {
-            percentage--;
-        } else {
-            percentage = 100;
+        if (s_battery_manager.update() == ESP_OK) {
+            NeraBatteryData battery = s_battery_manager.get_data();
+            app_state_set_battery(&battery);
         }
         vTaskDelay(pdMS_TO_TICKS(60000));
     }
@@ -231,6 +230,12 @@ extern "C" void app_main(void) {
         return;
     }
 
+    // Restaurar historial antes de iniciar sensores y UI.
+    if (storage_manager_init() != ESP_OK) {
+        NERA_LOGW(TAG, "Storage no disponible; se continuara sin historial persistente");
+    }
+    sleep_service_init();
+
     // --- Paso 4: Event Bus ---
     NERA_LOGI(TAG, "[3/5] Inicializando event bus...");
     if (event_bus_init() != ESP_OK) {
@@ -253,6 +258,8 @@ extern "C" void app_main(void) {
         NERA_LOGE(TAG, "Error inicializando backlight: %s", esp_err_to_name(ret));
         return;
     }
+    power_manager_init();
+    ble_manager_init();
 
     // El patrón de colores se reserva para el diagnóstico del hardware.
     // El arranque normal debe quedar bajo el control de LVGL.
@@ -268,12 +275,12 @@ extern "C" void app_main(void) {
 
     NERA_LOGI(TAG, "");
     NERA_LOGI(TAG, "+----------------------------------------+");
-    NERA_LOGI(TAG, "| NERA Firmware - Etapa 1B               |");
-    NERA_LOGI(TAG, "| Driver LCD + Backlight PWM OK          |");
-    NERA_LOGI(TAG, "| Display 240x320 activo con test visual |");
+    NERA_LOGI(TAG, "| NERA Firmware - Plataforma modular    |");
+    NERA_LOGI(TAG, "| LCD, LVGL, sensores y servicios OK    |");
+    NERA_LOGI(TAG, "| Display 240x320 activo                |");
     NERA_LOGI(TAG, "|                                        |");
-    NERA_LOGI(TAG, "| Siguiente paso: Etapa 1C               |");
-    NERA_LOGI(TAG, "| Integracion motor grafico LVGL v8      |");
+    NERA_LOGI(TAG, "| UI profesional y servicios activos    |");
+    NERA_LOGI(TAG, "| Historial persistente preparado        |");
     NERA_LOGI(TAG, "+----------------------------------------+");
     NERA_LOGI(TAG, "");
 
@@ -290,13 +297,12 @@ extern "C" void app_main(void) {
 
     NERA_LOGI(TAG, "");
     NERA_LOGI(TAG, "+----------------------------------------+");
-    NERA_LOGI(TAG, "| NERA Firmware - Etapa 2B               |");
-    NERA_LOGI(TAG, "| Componentes UI compartidos            |");
-    NERA_LOGI(TAG, "| Etiquetas, superficies y metricas     |");
-    NERA_LOGI(TAG, "| Indicadores compactos de pagina       |");
+    NERA_LOGI(TAG, "| NERA Firmware - Etapa 3A               |");
+    NERA_LOGI(TAG, "| Historial BPM persistente en NVS       |");
+    NERA_LOGI(TAG, "| Carga al arranque y guardado por lotes |");
     NERA_LOGI(TAG, "|                                        |");
-    NERA_LOGI(TAG, "| Siguiente paso: Etapa 3A               |");
-    NERA_LOGI(TAG, "| Arquitectura de datos persistentes    |");
+    NERA_LOGI(TAG, "| Siguiente paso: Etapa 3B               |");
+    NERA_LOGI(TAG, "| Persistencia de temperatura y ajustes |");
     NERA_LOGI(TAG, "+----------------------------------------+");
     NERA_LOGI(TAG, "");
 
@@ -308,6 +314,10 @@ extern "C" void app_main(void) {
                 NERA_SENSOR_TASK_PRIORITY, NULL);
     xTaskCreate(battery_mock_task, "nera_battery_mock", NERA_SENSOR_TASK_STACK_SIZE, NULL,
                 NERA_SENSOR_TASK_PRIORITY, NULL);
+    xTaskCreate(storage_manager_task, "nera_storage", NERA_STORAGE_TASK_STACK_SIZE, NULL,
+                NERA_STORAGE_TASK_PRIORITY, NULL);
+    xTaskCreate(ble_manager_task, "nera_ble", NERA_BLE_TASK_STACK_SIZE, NULL,
+                NERA_BLE_TASK_PRIORITY, NULL);
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(10000));

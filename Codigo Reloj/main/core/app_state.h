@@ -202,6 +202,10 @@ void app_state_set_battery(const NeraBatteryData *data);
  */
 void app_state_set_datetime(const NeraDateTime *dt);
 
+/** @brief Restaura el historial de BPM cargado desde almacenamiento persistente. */
+esp_err_t app_state_restore_heart_history(const float *history, uint8_t count);
+esp_err_t app_state_restore_temp_history(const float *history, uint8_t count);
+
 #ifdef __cplusplus
 }
 #endif

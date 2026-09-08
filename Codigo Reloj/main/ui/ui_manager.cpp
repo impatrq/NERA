@@ -15,6 +15,9 @@
 #include <stdio.h>
 
 #include "core/app_state.h"
+#include "services/health_service.h"
+#include "services/sleep_service.h"
+#include "power/power_manager.h"
 #include "esp_timer.h"
 #include "lvgl.h"
 #include "nera_config.h"
@@ -29,10 +32,16 @@ using nera_ui::create_metric_tile;
 typedef enum {
     NERA_UI_SCREEN_WATCH = 0,
     NERA_UI_SCREEN_HEALTH = 1,
+    NERA_UI_SCREEN_HEART = 2,
+    NERA_UI_SCREEN_TEMP = 3,
+    NERA_UI_SCREEN_SLEEP = 4,
+    NERA_UI_SCREEN_SETTINGS = 5,
+    NERA_UI_SCREEN_COUNT = 6,
 } NeraUIScreen;
 
 static lv_obj_t *s_watch_screen = NULL;
 static lv_obj_t *s_health_screen = NULL;
+static lv_obj_t *s_screens[NERA_UI_SCREEN_COUNT] = {};
 
 static lv_obj_t *s_watch_time_label = NULL;
 static lv_obj_t *s_watch_date_label = NULL;
@@ -47,6 +56,20 @@ static lv_obj_t *s_health_temp_value = NULL;
 static lv_obj_t *s_health_battery_value = NULL;
 static lv_obj_t *s_health_chart = NULL;
 static lv_chart_series_t *s_health_heart_series = NULL;
+
+static lv_obj_t *s_heart_current = NULL;
+static lv_obj_t *s_heart_min = NULL;
+static lv_obj_t *s_heart_max = NULL;
+static lv_obj_t *s_heart_avg = NULL;
+static lv_obj_t *s_heart_status = NULL;
+static lv_obj_t *s_temp_current = NULL;
+static lv_obj_t *s_temp_trend = NULL;
+static lv_obj_t *s_temp_source = NULL;
+static lv_obj_t *s_sleep_summary = NULL;
+static lv_obj_t *s_sleep_details = NULL;
+static lv_obj_t *s_settings_brightness = NULL;
+static lv_obj_t *s_settings_power = NULL;
+static lv_obj_t *s_settings_info = NULL;
 
 static NeraUIScreen s_current_screen = NERA_UI_SCREEN_WATCH;
 
@@ -80,13 +103,13 @@ static const char *mode_label(NeraSystemMode mode)
 
 static void show_screen(NeraUIScreen screen)
 {
-    lv_obj_t *target = (screen == NERA_UI_SCREEN_WATCH) ? s_watch_screen : s_health_screen;
+    lv_obj_t *target = (screen < NERA_UI_SCREEN_COUNT) ? s_screens[screen] : NULL;
     if (target == NULL || screen == s_current_screen) {
         return;
     }
 
     lv_scr_load_anim(target,
-                     screen == NERA_UI_SCREEN_HEALTH ?
+                     screen > s_current_screen ?
                      LV_SCR_LOAD_ANIM_MOVE_LEFT : LV_SCR_LOAD_ANIM_MOVE_RIGHT,
                      NERA_UI_TRANSITION_MS,
                      0,
@@ -101,21 +124,24 @@ static void navigation_event_cb(lv_event_t *event)
     if (code == LV_EVENT_GESTURE) {
         lv_dir_t gesture = lv_indev_get_gesture_dir(lv_indev_get_act());
         if (gesture == LV_DIR_LEFT || gesture == LV_DIR_RIGHT) {
-            show_screen(s_current_screen == NERA_UI_SCREEN_WATCH ?
-                        NERA_UI_SCREEN_HEALTH : NERA_UI_SCREEN_WATCH);
+            const bool forward = gesture == LV_DIR_LEFT;
+            const int next = forward ?
+                (s_current_screen + 1) % NERA_UI_SCREEN_COUNT :
+                (s_current_screen + NERA_UI_SCREEN_COUNT - 1) % NERA_UI_SCREEN_COUNT;
+            show_screen((NeraUIScreen)next);
         }
         return;
     }
 
     if (code == LV_EVENT_CLICKED) {
-        show_screen(s_current_screen == NERA_UI_SCREEN_WATCH ?
-                    NERA_UI_SCREEN_HEALTH : NERA_UI_SCREEN_WATCH);
+        show_screen((NeraUIScreen)((s_current_screen + 1) % NERA_UI_SCREEN_COUNT));
     }
 }
 
 static void create_watch_screen(void)
 {
     s_watch_screen = lv_obj_create(NULL);
+    s_screens[NERA_UI_SCREEN_WATCH] = s_watch_screen;
     apply_screen_base_style(s_watch_screen);
     lv_obj_add_event_cb(s_watch_screen, navigation_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(s_watch_screen, navigation_event_cb, LV_EVENT_GESTURE, NULL);
@@ -155,12 +181,14 @@ static void create_watch_screen(void)
     lv_obj_set_style_text_align(s_watch_status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align(s_watch_status_label, LV_ALIGN_TOP_MID, 0, 212);
 
-    nera_ui::create_page_indicator(s_watch_screen, 0, 2);
+    nera_ui::create_page_indicator(s_watch_screen, NERA_UI_SCREEN_WATCH,
+                                   NERA_UI_SCREEN_COUNT);
 }
 
 static void create_health_screen(void)
 {
     s_health_screen = lv_obj_create(NULL);
+    s_screens[NERA_UI_SCREEN_HEALTH] = s_health_screen;
     apply_screen_base_style(s_health_screen);
     lv_obj_add_event_cb(s_health_screen, navigation_event_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_event_cb(s_health_screen, navigation_event_cb, LV_EVENT_GESTURE, NULL);
@@ -208,7 +236,89 @@ static void create_health_screen(void)
         lv_color_hex(NERA_COLOR_HEART),
         LV_CHART_AXIS_PRIMARY_Y);
 
-    nera_ui::create_page_indicator(s_health_screen, 1, 2);
+    nera_ui::create_page_indicator(s_health_screen, NERA_UI_SCREEN_HEALTH,
+                                   NERA_UI_SCREEN_COUNT);
+}
+
+static lv_obj_t *create_detail_screen(const char *title, NeraUIScreen screen)
+{
+    lv_obj_t *root = lv_obj_create(NULL);
+    s_screens[screen] = root;
+    apply_screen_base_style(root);
+    lv_obj_add_event_cb(root, navigation_event_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(root, navigation_event_cb, LV_EVENT_GESTURE, NULL);
+
+    lv_obj_t *heading = create_label(root, &lv_font_montserrat_20,
+                                     NERA_COLOR_TEXT_PRIMARY);
+    lv_label_set_text(heading, title);
+    lv_obj_align(heading, LV_ALIGN_TOP_LEFT, NERA_UI_HEADER_MARGIN, 16);
+    nera_ui::create_page_indicator(root, screen, NERA_UI_SCREEN_COUNT);
+    return root;
+}
+
+static void create_heart_screen(void)
+{
+    lv_obj_t *root = create_detail_screen("Corazon", NERA_UI_SCREEN_HEART);
+
+    s_heart_current = create_label(root, &lv_font_montserrat_28, NERA_COLOR_HEART);
+    lv_obj_align(s_heart_current, LV_ALIGN_TOP_MID, 0, 56);
+    s_heart_status = create_label(root, &lv_font_montserrat_14, NERA_COLOR_TEXT_SECONDARY);
+    lv_obj_align(s_heart_status, LV_ALIGN_TOP_MID, 0, 100);
+
+    lv_obj_t *min_tile = create_metric_tile(root, "MIN", NERA_COLOR_INFO, &s_heart_min);
+    lv_obj_align(min_tile, LV_ALIGN_TOP_LEFT, NERA_UI_SIDE_MARGIN, 142);
+    lv_obj_t *max_tile = create_metric_tile(root, "MAX", NERA_COLOR_WARNING, &s_heart_max);
+    lv_obj_align(max_tile, LV_ALIGN_TOP_MID, 0, 142);
+    lv_obj_t *avg_tile = create_metric_tile(root, "AVG", NERA_COLOR_HEALTH_OK, &s_heart_avg);
+    lv_obj_align(avg_tile, LV_ALIGN_TOP_RIGHT, -NERA_UI_SIDE_MARGIN, 142);
+}
+
+static void create_temperature_screen(void)
+{
+    lv_obj_t *root = create_detail_screen("Temperatura", NERA_UI_SCREEN_TEMP);
+
+    s_temp_current = create_label(root, &lv_font_montserrat_28, NERA_COLOR_TEMP);
+    lv_obj_align(s_temp_current, LV_ALIGN_TOP_MID, 0, 58);
+    s_temp_trend = create_label(root, &lv_font_montserrat_14, NERA_COLOR_TEXT_SECONDARY);
+    lv_obj_align(s_temp_trend, LV_ALIGN_TOP_MID, 0, 106);
+    s_temp_source = create_label(root, &lv_font_montserrat_14, NERA_COLOR_WARNING);
+    lv_obj_set_width(s_temp_source, NERA_UI_CONTENT_WIDTH);
+    lv_obj_set_style_text_align(s_temp_source, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(s_temp_source, LV_ALIGN_TOP_MID, 0, 156);
+
+    lv_obj_t *note = create_label(root, &lv_font_montserrat_14, NERA_COLOR_TEXT_DISABLED);
+    lv_label_set_text(note, "No equivale a temperatura corporal");
+    lv_obj_set_width(note, NERA_UI_CONTENT_WIDTH);
+    lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(note, LV_ALIGN_TOP_MID, 0, 198);
+}
+
+static void create_sleep_screen(void)
+{
+    lv_obj_t *root = create_detail_screen("Sueno", NERA_UI_SCREEN_SLEEP);
+    s_sleep_summary = create_label(root, &lv_font_montserrat_28, NERA_COLOR_SLEEP);
+    lv_obj_align(s_sleep_summary, LV_ALIGN_TOP_MID, 0, 58);
+    s_sleep_details = create_label(root, &lv_font_montserrat_14, NERA_COLOR_TEXT_SECONDARY);
+    lv_obj_set_width(s_sleep_details, NERA_UI_CONTENT_WIDTH);
+    lv_obj_set_style_text_align(s_sleep_details, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(s_sleep_details, LV_LABEL_LONG_WRAP);
+    lv_obj_align(s_sleep_details, LV_ALIGN_TOP_MID, 0, 112);
+}
+
+static void create_settings_screen(void)
+{
+    lv_obj_t *root = create_detail_screen("Ajustes", NERA_UI_SCREEN_SETTINGS);
+    s_settings_brightness = create_label(root, &lv_font_montserrat_14,
+                                         NERA_COLOR_TEXT_PRIMARY);
+    lv_obj_align(s_settings_brightness, LV_ALIGN_TOP_LEFT, NERA_UI_SIDE_MARGIN, 70);
+    s_settings_power = create_label(root, &lv_font_montserrat_14,
+                                    NERA_COLOR_HEALTH_OK);
+    lv_obj_align(s_settings_power, LV_ALIGN_TOP_LEFT, NERA_UI_SIDE_MARGIN, 112);
+    s_settings_info = create_label(root, &lv_font_montserrat_14,
+                                   NERA_COLOR_TEXT_SECONDARY);
+    lv_obj_set_width(s_settings_info, NERA_UI_CONTENT_WIDTH);
+    lv_label_set_long_mode(s_settings_info, LV_LABEL_LONG_WRAP);
+    lv_obj_align(s_settings_info, LV_ALIGN_TOP_LEFT, NERA_UI_SIDE_MARGIN, 164);
 }
 
 static void update_health_chart(const NeraAppState *state)
@@ -236,6 +346,13 @@ static void update_ui_timer_cb(lv_timer_t *timer)
         return;
     }
 
+    NeraHealthSnapshot health = {};
+    if (health_service_get_snapshot(&health) != ESP_OK) {
+        return;
+    }
+    NeraSleepData sleep = {};
+    sleep_service_get_data(&sleep);
+
     const uint32_t total_seconds = (uint32_t)(esp_timer_get_time() / 1000000ULL);
     const uint32_t hours = (total_seconds / 3600U) % 24U;
     const uint32_t minutes = (total_seconds / 60U) % 60U;
@@ -253,10 +370,10 @@ static void update_ui_timer_cb(lv_timer_t *timer)
              weekday_name(state.datetime.weekday),
              (unsigned)state.datetime.day,
              (unsigned)state.datetime.month);
-    snprintf(heart_text, sizeof(heart_text), state.heart.is_valid ? "%02d" : "--",
-             (int)state.heart.bpm);
-    snprintf(temp_text, sizeof(temp_text), state.temp.is_valid ? "%.1f C" : "--.- C",
-             state.temp.celsius);
+    snprintf(heart_text, sizeof(heart_text), health.heart.is_valid ? "%02d" : "--",
+             (int)health.heart.bpm);
+    snprintf(temp_text, sizeof(temp_text), health.temperature.is_valid ? "%.1f C" : "--.- C",
+             health.temperature.celsius);
     snprintf(battery_text, sizeof(battery_text), "%u%%",
              (unsigned)state.battery.percentage);
     snprintf(status_text, sizeof(status_text), "%s  |  MOCK DATA",
@@ -274,9 +391,41 @@ static void update_ui_timer_cb(lv_timer_t *timer)
     lv_label_set_text(s_health_battery_value, battery_text);
 
     char summary_text[80];
-    snprintf(summary_text, sizeof(summary_text), "%s\nEstimacion local",
-             (state.heart.is_valid && state.temp.is_valid) ? "Estado normal" : "Revisar sensores");
+    snprintf(summary_text, sizeof(summary_text), "%s\n%s",
+             health.overall_ok ? "Estado normal" : "Revisar sensores",
+             health.uses_mock_data ? "Datos simulados" : "Datos medidos");
     lv_label_set_text(s_health_summary_label, summary_text);
+
+    char detail_text[96];
+    snprintf(detail_text, sizeof(detail_text), "%s BPM", heart_text);
+    lv_label_set_text(s_heart_current, detail_text);
+    snprintf(detail_text, sizeof(detail_text), "%02d BPM", (int)health.heart.bpm_min);
+    lv_label_set_text(s_heart_min, detail_text);
+    snprintf(detail_text, sizeof(detail_text), "%02d BPM", (int)health.heart.bpm_max);
+    lv_label_set_text(s_heart_max, detail_text);
+    snprintf(detail_text, sizeof(detail_text), "%02d BPM", (int)health.heart.bpm_avg);
+    lv_label_set_text(s_heart_avg, detail_text);
+    lv_label_set_text(s_heart_status, health.heart.is_valid ? "Medicion estable" : "Sensor no disponible");
+
+    lv_label_set_text(s_temp_current, temp_text);
+    lv_label_set_text(s_temp_trend, "Tendencia: estable");
+    lv_label_set_text(s_temp_source, health.uses_mock_data ? "DEMO / MOCK SENSOR" : "SENSOR REAL");
+
+    const uint16_t sleep_hours = sleep.duration_minutes / 60;
+    const uint16_t sleep_minutes = sleep.duration_minutes % 60;
+    snprintf(detail_text, sizeof(detail_text), "%uh %02um", sleep_hours, sleep_minutes);
+    lv_label_set_text(s_sleep_summary, detail_text);
+    snprintf(detail_text, sizeof(detail_text), "Calidad %u%%\nLigero %um  Profundo %um\nDespierto %um\n%s",
+             sleep.quality_percent, sleep.light_minutes, sleep.deep_minutes,
+             sleep.awake_minutes, sleep.is_estimate ? "ESTIMACION" : "MEDIDO");
+    lv_label_set_text(s_sleep_details, detail_text);
+
+    snprintf(detail_text, sizeof(detail_text), "Brillo: %u/255",
+             power_manager_get_brightness());
+    lv_label_set_text(s_settings_brightness, detail_text);
+    lv_label_set_text(s_settings_power,
+                      power_manager_is_saver_enabled() ? "Ahorro: activo" : "Ahorro: inactivo");
+    lv_label_set_text(s_settings_info, "Notificaciones: preparadas\nVibracion: preparada\nBLE: arquitectura lista");
 
     update_health_chart(&state);
 }
@@ -287,6 +436,10 @@ esp_err_t ui_manager_init(void)
 
     create_watch_screen();
     create_health_screen();
+    create_heart_screen();
+    create_temperature_screen();
+    create_sleep_screen();
+    create_settings_screen();
     s_current_screen = NERA_UI_SCREEN_WATCH;
 
     update_ui_timer_cb(NULL);
