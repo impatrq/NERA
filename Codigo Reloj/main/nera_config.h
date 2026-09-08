@@ -124,6 +124,29 @@
 #define NERA_BLE_TASK_PRIORITY          2
 #define NERA_STORAGE_TASK_PRIORITY      2
 
+// Arranque visual breve y transiciones (milisegundos).
+#define NERA_UI_SPLASH_DURATION_MS      1200
+#define NERA_UI_SPLASH_STATUS_DELAY_MS  400
+#define NERA_UI_TRANSITION_MS           220
+
+// Dimensiones compartidas de componentes UI (pixeles).
+#define NERA_UI_CORNER_RADIUS           8
+#define NERA_UI_METRIC_WIDTH            68
+#define NERA_UI_METRIC_HEIGHT           58
+#define NERA_UI_PAGE_DOT_SIZE           6
+#define NERA_UI_PAGE_DOT_GAP            6
+#define NERA_UI_PAGE_BOTTOM_MARGIN      12
+
+// Layout calculado para la resolucion real del LCD 240x320.
+#define NERA_UI_SIDE_MARGIN             14
+#define NERA_UI_HEADER_MARGIN           18
+#define NERA_UI_CONTENT_WIDTH           (NERA_LCD_WIDTH - (NERA_UI_SIDE_MARGIN * 2))
+#define NERA_UI_WATCH_CARD_HEIGHT       76
+#define NERA_UI_WATCH_CARD_TOP          122
+#define NERA_UI_HEALTH_TILES_TOP        62
+#define NERA_UI_HEALTH_CHART_HEIGHT     112
+#define NERA_UI_HEALTH_CHART_BOTTOM     34
+
 // =============================================================================
 // UI — PALETA DE COLORES NERA
 // =============================================================================

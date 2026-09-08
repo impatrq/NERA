@@ -9,6 +9,8 @@
  */
 
 #include "ui/ui_manager.h"
+#include "ui/components/ui_components.h"
+#include "ui/screens/splash_screen.h"
 
 #include <stdio.h>
 
@@ -19,6 +21,10 @@
 #include "utils/logger.h"
 
 static const char *TAG = NERA_TAG_LVGL;
+
+using nera_ui::apply_screen_base_style;
+using nera_ui::create_label;
+using nera_ui::create_metric_tile;
 
 typedef enum {
     NERA_UI_SCREEN_WATCH = 0,
@@ -72,51 +78,6 @@ static const char *mode_label(NeraSystemMode mode)
     }
 }
 
-static void apply_screen_base_style(lv_obj_t *screen)
-{
-    lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(screen, lv_color_hex(NERA_COLOR_BG), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
-}
-
-static lv_obj_t *create_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color)
-{
-    lv_obj_t *label = lv_label_create(parent);
-    lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
-    lv_obj_set_style_text_color(label, lv_color_hex(color), LV_PART_MAIN);
-    lv_obj_set_style_text_letter_space(label, 0, LV_PART_MAIN);
-    return label;
-}
-
-static lv_obj_t *create_metric_tile(lv_obj_t *parent,
-                                    const char *title,
-                                    uint32_t accent,
-                                    lv_obj_t **value_label)
-{
-    lv_obj_t *tile = lv_obj_create(parent);
-    lv_obj_remove_style_all(tile);
-    lv_obj_set_size(tile, 68, 58);
-    lv_obj_set_style_bg_color(tile, lv_color_hex(NERA_COLOR_SURFACE), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(tile, 8, LV_PART_MAIN);
-    lv_obj_set_style_border_width(tile, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(tile, lv_color_hex(accent), LV_PART_MAIN);
-    lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t *title_label = create_label(tile, &lv_font_montserrat_14,
-                                         NERA_COLOR_TEXT_SECONDARY);
-    lv_label_set_text(title_label, title);
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 6);
-
-    *value_label = create_label(tile, &lv_font_montserrat_14, accent);
-    lv_obj_set_width(*value_label, 62);
-    lv_obj_set_style_text_align(*value_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_label_set_long_mode(*value_label, LV_LABEL_LONG_CLIP);
-    lv_obj_align(*value_label, LV_ALIGN_BOTTOM_MID, 0, -8);
-
-    return tile;
-}
-
 static void show_screen(NeraUIScreen screen)
 {
     lv_obj_t *target = (screen == NERA_UI_SCREEN_WATCH) ? s_watch_screen : s_health_screen;
@@ -124,7 +85,12 @@ static void show_screen(NeraUIScreen screen)
         return;
     }
 
-    lv_scr_load_anim(target, LV_SCR_LOAD_ANIM_MOVE_LEFT, 220, 0, false);
+    lv_scr_load_anim(target,
+                     screen == NERA_UI_SCREEN_HEALTH ?
+                     LV_SCR_LOAD_ANIM_MOVE_LEFT : LV_SCR_LOAD_ANIM_MOVE_RIGHT,
+                     NERA_UI_TRANSITION_MS,
+                     0,
+                     false);
     s_current_screen = screen;
 }
 
@@ -157,11 +123,11 @@ static void create_watch_screen(void)
     lv_obj_t *brand = create_label(s_watch_screen, &lv_font_montserrat_14,
                                    NERA_COLOR_ACCENT);
     lv_label_set_text(brand, "NERA");
-    lv_obj_align(brand, LV_ALIGN_TOP_LEFT, 18, 14);
+    lv_obj_align(brand, LV_ALIGN_TOP_LEFT, NERA_UI_HEADER_MARGIN, 14);
 
     s_watch_battery_value = create_label(s_watch_screen, &lv_font_montserrat_14,
                                          NERA_COLOR_BATTERY);
-    lv_obj_align(s_watch_battery_value, LV_ALIGN_TOP_RIGHT, -18, 14);
+    lv_obj_align(s_watch_battery_value, LV_ALIGN_TOP_RIGHT, -NERA_UI_HEADER_MARGIN, 14);
 
     s_watch_time_label = create_label(s_watch_screen, &lv_font_montserrat_28,
                                       NERA_COLOR_TEXT_PRIMARY);
@@ -171,14 +137,9 @@ static void create_watch_screen(void)
                                       NERA_COLOR_TEXT_SECONDARY);
     lv_obj_align(s_watch_date_label, LV_ALIGN_TOP_MID, 0, 92);
 
-    lv_obj_t *metrics_card = lv_obj_create(s_watch_screen);
-    lv_obj_remove_style_all(metrics_card);
-    lv_obj_set_size(metrics_card, 206, 76);
-    lv_obj_set_style_bg_color(metrics_card, lv_color_hex(NERA_COLOR_SURFACE), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(metrics_card, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(metrics_card, 8, LV_PART_MAIN);
-    lv_obj_clear_flag(metrics_card, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_align(metrics_card, LV_ALIGN_TOP_MID, 0, 122);
+    lv_obj_t *metrics_card = nera_ui::create_surface(
+        s_watch_screen, NERA_UI_CONTENT_WIDTH, NERA_UI_WATCH_CARD_HEIGHT);
+    lv_obj_align(metrics_card, LV_ALIGN_TOP_MID, 0, NERA_UI_WATCH_CARD_TOP);
 
     s_watch_heart_value = create_label(metrics_card, &lv_font_montserrat_20,
                                        NERA_COLOR_HEART);
@@ -190,14 +151,11 @@ static void create_watch_screen(void)
 
     s_watch_status_label = create_label(s_watch_screen, &lv_font_montserrat_14,
                                         NERA_COLOR_TEXT_SECONDARY);
-    lv_obj_set_width(s_watch_status_label, 210);
+    lv_obj_set_width(s_watch_status_label, NERA_UI_CONTENT_WIDTH);
     lv_obj_set_style_text_align(s_watch_status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align(s_watch_status_label, LV_ALIGN_TOP_MID, 0, 212);
 
-    lv_obj_t *hint = create_label(s_watch_screen, &lv_font_montserrat_14,
-                                  NERA_COLOR_TEXT_DISABLED);
-    lv_label_set_text(hint, "TOQUE PARA SALUD");
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -18);
+    nera_ui::create_page_indicator(s_watch_screen, 0, 2);
 }
 
 static void create_health_screen(void)
@@ -210,35 +168,36 @@ static void create_health_screen(void)
     lv_obj_t *title = create_label(s_health_screen, &lv_font_montserrat_20,
                                    NERA_COLOR_TEXT_PRIMARY);
     lv_label_set_text(title, "Salud");
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 18, 16);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, NERA_UI_HEADER_MARGIN, 16);
 
     s_health_summary_label = create_label(s_health_screen, &lv_font_montserrat_14,
                                           NERA_COLOR_TEXT_SECONDARY);
-    lv_obj_set_width(s_health_summary_label, 140);
     lv_label_set_long_mode(s_health_summary_label, LV_LABEL_LONG_WRAP);
-    lv_obj_align(s_health_summary_label, LV_ALIGN_TOP_RIGHT, -16, 18);
+    lv_obj_set_width(s_health_summary_label, NERA_UI_CONTENT_WIDTH - 72);
+    lv_obj_align(s_health_summary_label, LV_ALIGN_TOP_RIGHT, -NERA_UI_HEADER_MARGIN, 18);
 
     lv_obj_t *tile_heart = create_metric_tile(s_health_screen, "BPM",
                                               NERA_COLOR_HEART,
                                               &s_health_heart_value);
-    lv_obj_align(tile_heart, LV_ALIGN_TOP_LEFT, 14, 62);
+    lv_obj_align(tile_heart, LV_ALIGN_TOP_LEFT, NERA_UI_SIDE_MARGIN, NERA_UI_HEALTH_TILES_TOP);
 
     lv_obj_t *tile_temp = create_metric_tile(s_health_screen, "TEMP",
                                              NERA_COLOR_TEMP,
                                              &s_health_temp_value);
-    lv_obj_align(tile_temp, LV_ALIGN_TOP_MID, 0, 62);
+    lv_obj_align(tile_temp, LV_ALIGN_TOP_MID, 0, NERA_UI_HEALTH_TILES_TOP);
 
     lv_obj_t *tile_battery = create_metric_tile(s_health_screen, "BAT",
                                                 NERA_COLOR_BATTERY,
                                                 &s_health_battery_value);
-    lv_obj_align(tile_battery, LV_ALIGN_TOP_RIGHT, -14, 62);
+    lv_obj_align(tile_battery, LV_ALIGN_TOP_RIGHT, -NERA_UI_SIDE_MARGIN,
+                 NERA_UI_HEALTH_TILES_TOP);
 
     s_health_chart = lv_chart_create(s_health_screen);
-    lv_obj_set_size(s_health_chart, 212, 112);
-    lv_obj_align(s_health_chart, LV_ALIGN_BOTTOM_MID, 0, -34);
+    lv_obj_set_size(s_health_chart, NERA_UI_CONTENT_WIDTH, NERA_UI_HEALTH_CHART_HEIGHT);
+    lv_obj_align(s_health_chart, LV_ALIGN_BOTTOM_MID, 0, -NERA_UI_HEALTH_CHART_BOTTOM);
     lv_obj_set_style_bg_color(s_health_chart, lv_color_hex(NERA_COLOR_SURFACE), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_health_chart, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_health_chart, 8, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_health_chart, NERA_UI_CORNER_RADIUS, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_health_chart, 0, LV_PART_MAIN);
     lv_obj_set_style_line_color(s_health_chart, lv_color_hex(0x303044), LV_PART_MAIN);
     lv_chart_set_type(s_health_chart, LV_CHART_TYPE_LINE);
@@ -249,10 +208,7 @@ static void create_health_screen(void)
         lv_color_hex(NERA_COLOR_HEART),
         LV_CHART_AXIS_PRIMARY_Y);
 
-    lv_obj_t *hint = create_label(s_health_screen, &lv_font_montserrat_14,
-                                  NERA_COLOR_TEXT_DISABLED);
-    lv_label_set_text(hint, "TOQUE PARA VOLVER");
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -12);
+    nera_ui::create_page_indicator(s_health_screen, 1, 2);
 }
 
 static void update_health_chart(const NeraAppState *state)
@@ -331,12 +287,17 @@ esp_err_t ui_manager_init(void)
 
     create_watch_screen();
     create_health_screen();
-    lv_scr_load(s_watch_screen);
     s_current_screen = NERA_UI_SCREEN_WATCH;
 
     update_ui_timer_cb(NULL);
     lv_timer_create(update_ui_timer_cb, 1000, NULL);
 
-    NERA_LOGI(TAG, "UI manager ready: watchface + health screen");
+    esp_err_t splash_result = splash_screen_show(s_watch_screen);
+    if (splash_result != ESP_OK) {
+        NERA_LOGW(TAG, "Splash unavailable: %s", esp_err_to_name(splash_result));
+        lv_scr_load(s_watch_screen);
+    }
+
+    NERA_LOGI(TAG, "UI manager ready: splash + watchface + health screen");
     return ESP_OK;
 }

@@ -23,6 +23,8 @@ idf_component_register(
         "lvgl/lvgl_port.cpp"
         "lvgl/lvgl_task.cpp"
         "ui/ui_manager.cpp"
+        "ui/screens/splash_screen.cpp"
+        "ui/components/ui_components.cpp"
 
     INCLUDE_DIRS
         "."

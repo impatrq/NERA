@@ -290,13 +290,13 @@ extern "C" void app_main(void) {
 
     NERA_LOGI(TAG, "");
     NERA_LOGI(TAG, "+----------------------------------------+");
-    NERA_LOGI(TAG, "| NERA Firmware - Etapa 1D               |");
-    NERA_LOGI(TAG, "| Watchface + pantalla Salud             |");
-    NERA_LOGI(TAG, "| Navegacion touch/swipe basica          |");
-    NERA_LOGI(TAG, "| Datos mock integrados con AppState     |");
+    NERA_LOGI(TAG, "| NERA Firmware - Etapa 2B               |");
+    NERA_LOGI(TAG, "| Componentes UI compartidos            |");
+    NERA_LOGI(TAG, "| Etiquetas, superficies y metricas     |");
+    NERA_LOGI(TAG, "| Indicadores compactos de pagina       |");
     NERA_LOGI(TAG, "|                                        |");
-    NERA_LOGI(TAG, "| Siguiente paso: Etapa 1E               |");
-    NERA_LOGI(TAG, "| Refinar touch/gestos y componentes UI  |");
+    NERA_LOGI(TAG, "| Siguiente paso: Etapa 3A               |");
+    NERA_LOGI(TAG, "| Arquitectura de datos persistentes    |");
     NERA_LOGI(TAG, "+----------------------------------------+");
     NERA_LOGI(TAG, "");
 
