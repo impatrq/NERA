@@ -1,0 +1,5 @@
+"-specs=C:/Users/boca_/OneDrive/Documentos/GitHub/NERA Github/Codigo Reloj/build/bootloader/specs/picolibc.specs"
+-mlongcalls
+-fno-builtin-memcpy
+-fno-builtin-memset
+-fno-builtin-bzero

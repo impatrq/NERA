@@ -1,0 +1,75 @@
+# =============================================================================
+# NERA Smartwatch — Kconfig.projbuild
+# =============================================================================
+#
+# ¿Qué es Kconfig?
+# Es el sistema de configuración que usa ESP-IDF (el mismo que usa el kernel
+# de Linux). Permite definir opciones configurables para el proyecto que
+# aparecen en "idf.py menuconfig" y se guardan en sdkconfig.
+#
+# ¿Para qué usamos Kconfig en NERA?
+# Para poder activar/desactivar fácilmente cosas como:
+# - Sensores simulados vs. sensores reales
+# - Logging detallado para debugging
+# Sin tener que modificar código fuente.
+#
+# Las opciones definidas aquí se vuelven constantes de preprocesador C:
+#   config NERA_USE_MOCK_SENSORS → CONFIG_NERA_USE_MOCK_SENSORS
+# =============================================================================
+
+menu "NERA Smartwatch — Configuración del Proyecto"
+
+    config NERA_USE_MOCK_SENSORS
+        bool "Usar sensores simulados (mock sensors)"
+        default y
+        help
+            Cuando está habilitado, NERA usa datos simulados en lugar de
+            leer de sensores de hardware reales.
+
+            Activar durante el desarrollo para:
+            - Probar la interfaz sin conectar sensores externos.
+            - Desarrollar pantallas sin hardware disponible.
+
+            Desactivar cuando el hardware de sensores esté conectado y
+            configurado correctamente.
+
+            Los mocks generan datos realistas con variación suave para
+            simular mediciones reales (BPM, temperatura, batería).
+
+    config NERA_LOG_VERBOSE
+        bool "Habilitar logging detallado (verbose)"
+        default n
+        help
+            Activa mensajes de debug adicionales en todos los módulos de NERA.
+            Útil para diagnosticar problemas específicos, pero genera mucho
+            output en el monitor serial. Desactivar en uso normal.
+
+    config NERA_SCREEN_TIMEOUT_MS
+        int "Tiempo de apagado de pantalla (ms)"
+        default 30000
+        range 5000 300000
+        help
+            Tiempo en milisegundos sin interacción antes de que la pantalla
+            se atenúe y eventualmente se apague.
+            Valor por defecto: 30000 ms = 30 segundos.
+
+    config NERA_DIM_BRIGHTNESS
+        int "Brillo en modo atenuado (0-255)"
+        default 30
+        range 0 255
+        help
+            Nivel de brillo de la pantalla cuando está en modo atenuado
+            (antes de apagarse completamente).
+            0 = completamente apagado, 255 = máximo brillo.
+
+    config NERA_SENSOR_UPDATE_MS
+        int "Intervalo de actualización de sensores (ms)"
+        default 2000
+        range 500 60000
+        help
+            Cada cuántos milisegundos se leen los sensores y se actualizan
+            los datos en la interfaz.
+            Valor más bajo = mayor consumo de energía.
+            Valor por defecto: 2000 ms = 2 segundos.
+
+endmenu

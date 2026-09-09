@@ -1,0 +1,40 @@
+# =============================================================================
+# NERA Smartwatch — Tabla de Particiones Personalizada
+# =============================================================================
+#
+# ¿Qué es una tabla de particiones?
+# La Flash del ESP32 se divide en "particiones" — secciones independientes
+# cada una con un propósito específico. Es similar a las particiones de un
+# disco rígido (C:, D:, etc.), pero en la memoria Flash del microcontrolador.
+#
+# ¿Por qué necesitamos una tabla personalizada?
+# La tabla por defecto de ESP-IDF asume una Flash de 2MB y no incluye espacio
+# para LittleFS (nuestro sistema de archivos para historial). Con 16MB tenemos
+# mucho espacio para ser generosos.
+#
+# Columnas:
+#   Nombre  | Tipo | SubTipo | Offset    | Tamaño  | Flags
+#
+# Tipos principales:
+#   app  = partición de código ejecutable
+#   data = datos (NVS, archivos, etc.)
+#
+# Offsets en hexadecimal. Si se deja vacío, ESP-IDF lo calcula automáticamente.
+# =============================================================================
+
+# Name,     Type, SubType,  Offset,    Size,     Flags
+nvs,        data, nvs,      0x9000,    0x6000,
+phy_init,   data, phy,      0xF000,    0x1000,
+factory,    app,  factory,  0x10000,   0x400000,
+littlefs,   data, spiffs,   0x410000,  0xBE0000,
+
+# Resumen de uso de memoria con Flash de 16MB (0x1000000 = 16,777,216 bytes):
+#
+# 0x00000 - 0x08FFF : Bootloader ESP-IDF (reservado, ~36 KB)
+# 0x09000 - 0x0EFFF : NVS - configuración persistente (24 KB)
+# 0x0F000 - 0x0FFFF : PHY calibración Wi-Fi/BT (4 KB)
+# 0x10000 - 0x40FFFF: App firmware NERA (4 MB — espacio amplio para LVGL + código)
+# 0x41000 - 0xFEFFFF: LittleFS — historial de sensores (~12 MB)
+#
+# Con 12 MB para LittleFS podemos guardar años de historial de sensores
+# sin preocuparnos por el espacio.

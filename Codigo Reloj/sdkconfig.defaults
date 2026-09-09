@@ -1,0 +1,168 @@
+# =============================================================================
+# NERA Smartwatch — sdkconfig.defaults
+# =============================================================================
+#
+# Este archivo define la configuración por defecto del SDK de ESP-IDF para
+# el proyecto NERA. Cuando ejecutás "idf.py build" por primera vez, estas
+# opciones se aplican automáticamente al archivo sdkconfig que se genera.
+#
+# ¿Qué es sdkconfig?
+# Es el archivo de configuración principal del firmware ESP-IDF. Controla
+# desde el tamaño del stack hasta si se activa PSRAM, Wi-Fi, Bluetooth, etc.
+# Tiene cientos de opciones. sdkconfig.defaults permite presetear las
+# importantes sin tener que configurarlas manualmente con "idf.py menuconfig".
+#
+# IMPORTANTE: sdkconfig.defaults se aplica SOLO si no existe un sdkconfig ya
+# generado. Si modificás este archivo después del primer build, debés eliminar
+# el sdkconfig generado para que los cambios tengan efecto.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# TARGET — Microcontrolador objetivo
+# -----------------------------------------------------------------------------
+# Le indica al compilador que estamos compilando para ESP32-S3.
+# Cada variante de ESP32 tiene diferentes periféricos y características.
+CONFIG_IDF_TARGET="esp32s3"
+
+# -----------------------------------------------------------------------------
+# CPU — Frecuencia del procesador
+# -----------------------------------------------------------------------------
+# El ESP32-S3R8 puede correr hasta 240 MHz. Para un smartwatch queremos
+# máximo rendimiento especialmente en el renderizado de UI.
+CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240=y
+CONFIG_ESP32S3_DEFAULT_CPU_FREQ_MHZ=240
+
+# -----------------------------------------------------------------------------
+# FLASH — Memoria de programa
+# -----------------------------------------------------------------------------
+# La placa tiene 16 MB de Flash externa donde vive el firmware compilado.
+# Declarar el tamaño correcto evita problemas al flashear y permite
+# usar toda la memoria disponible para el código y datos estáticos.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+# QIO = Quad I/O: usa 4 líneas de datos para leer Flash más rápido.
+# Es el modo recomendado para ESP32-S3 con Flash externa.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# -----------------------------------------------------------------------------
+# PSRAM — RAM extra (8 MB octual)
+# -----------------------------------------------------------------------------
+# El ESP32-S3R8 tiene 8 MB de PSRAM integrada en el chip (el sufijo R8).
+# PSRAM = Pseudo Static RAM. Es RAM adicional accesible por el CPU.
+#
+# ¿Para qué necesitamos PSRAM en NERA?
+# - Framebuffer de LVGL: a 240x320x2 bytes = ~150 KB solo para la imagen
+# - Historial de sensores en memoria
+# - Buffers de DMA para SPI
+#
+# CONFIG_SPIRAM habilita el soporte de PSRAM.
+CONFIG_SPIRAM=y
+# MODE_OCT = Octal SPI: usa 8 líneas de datos para transferencias ultra rápidas.
+# El ESP32-S3R8 soporta PSRAM octal nativa.
+CONFIG_SPIRAM_MODE_OCT=y
+# 80 MHz es la velocidad de la PSRAM. Más rápido = mejor rendimiento de UI.
+CONFIG_SPIRAM_SPEED_80M=y
+# Permite que las instrucciones de código se carguen desde PSRAM cuando la
+# Flash interna no alcanza. Útil para proyectos grandes.
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+# Permite que malloc() use PSRAM automáticamente cuando la SRAM interna
+# se agota. Fundamental para LVGL y sus estructuras de datos.
+CONFIG_SPIRAM_USE_MALLOC=y
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+
+# -----------------------------------------------------------------------------
+# LVGL v8 — Renderizado RGB565
+# -----------------------------------------------------------------------------
+CONFIG_LV_CONF_SKIP=y
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_COLOR_DEPTH=16
+CONFIG_LV_COLOR_16_SWAP=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_DISP_DEF_REFR_PERIOD=30
+CONFIG_LV_MEM_CUSTOM=n
+CONFIG_LV_USE_ASSERT_NULL=n
+CONFIG_LV_USE_ASSERT_MALLOC=n
+
+# -----------------------------------------------------------------------------
+# PARTICIONES — Tabla de particiones personalizada
+# -----------------------------------------------------------------------------
+# Le indica a ESP-IDF que use nuestro archivo partitions.csv en lugar de
+# la tabla de particiones por defecto.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# -----------------------------------------------------------------------------
+# CONSOLA SERIAL — USB CDC (necesario para ESP32-S3 con USB nativo)
+# -----------------------------------------------------------------------------
+# El ESP32-S3 tiene USB nativo (no necesita chip USB-to-UART externo).
+# Para que el puerto serial funcione, debemos indicar que la consola
+# usa USB CDC (Communications Device Class) en lugar de UART físico.
+#
+# Si esto no está habilitado, no verás ninguna salida en el monitor serial.
+CONFIG_ESP_CONSOLE_USB_CDC=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# -----------------------------------------------------------------------------
+# FREERTOS — Sistema operativo en tiempo real
+# -----------------------------------------------------------------------------
+# FreeRTOS es el RTOS (Real-Time Operating System) integrado en ESP-IDF.
+# Permite ejecutar múltiples "tareas" de forma concurrente.
+#
+# HZ = cuántas veces por segundo el scheduler de FreeRTOS puede cambiar
+# entre tareas. 1000 Hz significa que puede cambiar tareas cada 1ms.
+CONFIG_FREERTOS_HZ=1000
+
+# Stack size de la tarea principal (app_main). 8KB es suficiente para
+# inicializar todos los módulos y lanzar las tareas secundarias.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Número de punteros de almacenamiento local por tarea. LVGL usa uno.
+CONFIG_FREERTOS_THREAD_LOCAL_STORAGE_POINTERS=3
+
+# -----------------------------------------------------------------------------
+# LOGGING — Sistema de logs
+# -----------------------------------------------------------------------------
+# ESP-IDF tiene un sistema de logging con niveles: ERROR, WARN, INFO, DEBUG, VERBOSE.
+# En desarrollo queremos ver INFO por defecto, con posibilidad de DEBUG.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_VERBOSE=y
+# Activa timestamps en los mensajes de log (ms desde boot).
+CONFIG_LOG_TIMESTAMP_SOURCE_RTOS=y
+
+# -----------------------------------------------------------------------------
+# NVS — Non-Volatile Storage
+# -----------------------------------------------------------------------------
+# NVS es el sistema de almacenamiento de clave-valor de ESP-IDF.
+# Se usa para guardar configuraciones que deben sobrevivir reinicios.
+# No necesitamos encriptación por ahora.
+CONFIG_NVS_ENCRYPTION=n
+
+# -----------------------------------------------------------------------------
+# WATCHDOG — Temporizador de seguridad
+# -----------------------------------------------------------------------------
+# El watchdog es un mecanismo de seguridad: si el firmware se "cuelga"
+# sin responder durante N segundos, el watchdog reinicia el ESP32.
+# 10 segundos es suficiente para operaciones lentas como inicialización de SD.
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# -----------------------------------------------------------------------------
+# WIFI — Necesario para sincronización futura de hora (NTP)
+# -----------------------------------------------------------------------------
+CONFIG_ESP_WIFI_ENABLED=y
+
+# -----------------------------------------------------------------------------
+# BLUETOOTH — BLE para comunicación con smartphone
+# -----------------------------------------------------------------------------
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# -----------------------------------------------------------------------------
+# COMPILADOR — Optimizaciones
+# -----------------------------------------------------------------------------
+# Os = optimización para tamaño de código.
+# O2 = optimización para velocidad (mejor para UI).
+# Para desarrollo usamos O2 para que la UI sea fluida.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y

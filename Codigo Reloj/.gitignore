@@ -1,0 +1,24 @@
+# ESP-IDF - archivos generados
+build/
+managed_components/
+
+# LVGL se mantiene como carpeta local; no registrar su repositorio embebido
+components/lvgl/
+
+# Configuracion local generada por ESP-IDF
+sdkconfig
+sdkconfig.old
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Archivos temporales
+*.tmp
+*.log
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
