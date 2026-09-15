@@ -12,6 +12,7 @@
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "utils/logger.h"
 
 static const char *TAG = NERA_TAG_DISPLAY;
@@ -19,6 +20,14 @@ static const char *TAG = NERA_TAG_DISPLAY;
 static esp_lcd_panel_handle_t s_panel_handle = NULL;
 static esp_lcd_panel_io_handle_t s_io_handle = NULL;
 static bool s_is_initialized = false;
+static SemaphoreHandle_t s_transfer_done = NULL;
+
+// El callback se ejecuta en ISR cuando DMA termino de leer el buffer.
+static bool transfer_done(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t *, void *) {
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(s_transfer_done, &woken);
+    return woken == pdTRUE;
+}
 
 static inline uint16_t rgb565_color(uint8_t r, uint8_t g, uint8_t b) {
     uint16_t c = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
@@ -50,7 +59,10 @@ esp_err_t display_driver_init(void) {
     }
 
     // 2. Panel IO SPI
+    s_transfer_done = xSemaphoreCreateBinary();
+    if (!s_transfer_done) return ESP_ERR_NO_MEM;
     esp_lcd_panel_io_spi_config_t io_cfg = {};
+    io_cfg.on_color_trans_done = transfer_done;
     io_cfg.dc_gpio_num         = (gpio_num_t)NERA_LCD_PIN_DC;
     io_cfg.cs_gpio_num         = (gpio_num_t)NERA_LCD_PIN_CS;
     io_cfg.pclk_hz             = NERA_LCD_SPI_FREQ_HZ; // 40 MHz
@@ -102,7 +114,13 @@ esp_err_t display_driver_draw_bitmap(int x_start, int y_start, int x_end, int y_
     if (!s_is_initialized || s_panel_handle == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    return esp_lcd_panel_draw_bitmap(s_panel_handle, x_start, y_start, x_end, y_end, color_data);
+    if (!color_data || x_start < 0 || y_start < 0 || x_end > NERA_LCD_WIDTH ||
+        y_end > NERA_LCD_HEIGHT || x_start >= x_end || y_start >= y_end) return ESP_ERR_INVALID_ARG;
+    // Un unico productor: arranque primero, tarea LVGL despues. Dormir hasta el
+    // fin de DMA evita reutilizar el buffer mientras el controlador aun lo lee.
+    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel_handle, x_start, y_start, x_end, y_end, color_data);
+    if (err == ESP_OK) xSemaphoreTake(s_transfer_done, portMAX_DELAY);
+    return err;
 }
 
 esp_err_t display_driver_fill_screen(uint16_t rgb565) {

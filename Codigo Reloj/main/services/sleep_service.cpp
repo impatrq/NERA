@@ -1,3 +1,4 @@
+/** Servicio de sueno: datos de demostracion explicitos, sin diagnostico ni IMU. */
 #include "services/sleep_service.h"
 
 #include "utils/logger.h"
@@ -22,6 +23,6 @@ esp_err_t sleep_service_get_data(NeraSleepData *data)
     if (data == nullptr) {
         return ESP_ERR_INVALID_ARG;
     }
-    *data = s_sleep_data;
+    *data = NERA_USE_MOCK_SENSORS ? s_sleep_data : NeraSleepData{};
     return ESP_OK;
 }

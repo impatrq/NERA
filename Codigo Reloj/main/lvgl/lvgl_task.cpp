@@ -104,7 +104,9 @@ void lvgl_task(void *pvParameters)
         }
 
         // Dormir sin bloquear otras tareas de FreeRTOS
-        vTaskDelay(pdMS_TO_TICKS(delay_ms));
+        if (delay_ms > 20) delay_ms = 20;
+        TickType_t ticks = pdMS_TO_TICKS(delay_ms);
+        vTaskDelay(ticks > 0 ? ticks : 1);
     }
 
     // Este punto nunca se alcanza, pero lo dejamos para claridad de código.

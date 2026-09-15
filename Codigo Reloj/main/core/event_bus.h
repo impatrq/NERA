@@ -17,9 +17,8 @@
  *
  * Esto hace el código más modular, testeable y fácil de mantener.
  *
- * NOTA: En esta Etapa 1A el event bus es un stub (esqueleto vacío).
- * Se implementará completamente en la Etapa 1C cuando integremos LVGL
- * y necesitemos comunicación real entre la tarea de sensores y la de UI.
+ * La UI consume una cantidad acotada de eventos por refresco y obtiene
+ * un snapshot consistente desde AppState. La cola no almacena el historial.
  */
 
 #pragma once
@@ -111,10 +110,10 @@ esp_err_t event_bus_init(void);
 /**
  * @brief Publica un evento en el bus.
  *
- * Cualquier módulo puede publicar eventos. Si la queue está llena,
- * el evento más antiguo se descarta (política "overwrite").
+ * Cualquier tarea puede publicar eventos. Si la queue esta llena,
+ * se rechaza el evento nuevo y se devuelve ESP_ERR_NO_MEM.
  *
- * Esta función es segura para llamar desde interrupciones ISR.
+ * No llamar desde ISR: usa la API de colas para tareas.
  *
  * @param id   Tipo de evento.
  * @param data Datos del evento (puede ser NULL).

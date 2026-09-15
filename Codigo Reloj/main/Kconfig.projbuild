@@ -1,0 +1,2 @@
+# ESP-IDF discovers project options inside components, not the project root.
+rsource "../Kconfig.projbuild"

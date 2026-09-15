@@ -1,11 +1,9 @@
 /**
  * @file event_bus.cpp
- * @brief Implementación mínima del bus de eventos (stub para Etapa 1A).
+ * @brief Cola de notificaciones entre tareas y UI.
  *
- * En esta etapa, el event bus solo implementa la inicialización básica.
- * La funcionalidad completa de publicación y recepción de eventos se
- * activará en etapas posteriores cuando tengamos módulos que necesiten
- * comunicarse entre sí.
+ * Publicar no bloquea: si no hay lugar devuelve error. La UI consume eventos
+ * por lotes y consulta AppState, que conserva la ultima lectura consistente.
  */
 
 #include "event_bus.h"

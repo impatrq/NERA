@@ -1,222 +1,117 @@
+/** NVS compatible con 3A: ultimas 60 muestras, no archivo continuo.
+ * Storage escribe fuera de LVGL cada minuto si cambio la serie, incluso llena. */
 #include "storage/storage_manager.h"
-
-#include <string.h>
-
 #include "core/app_state.h"
-#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
-#include "nera_config.h"
 #include "nvs.h"
 #include "utils/logger.h"
-
-static constexpr char NERA_STORAGE_NAMESPACE[] = "nera";
-static constexpr char NERA_HEART_HISTORY_KEY[] = "heart_hist";
-static constexpr char NERA_TEMP_HISTORY_KEY[] = "temp_hist";
-static constexpr char NERA_SETTINGS_KEY[] = "settings";
-static constexpr uint32_t NERA_STORAGE_SAVE_INTERVAL_MS = 60000;
-static constexpr uint8_t NERA_STORAGE_BATCH_SIZE = 10;
-
-typedef struct {
-    uint8_t count;
-    float values[NERA_HISTORY_BUFFER_SIZE];
-} HeartHistoryBlob;
-
-typedef struct {
-    uint8_t count;
-    float values[NERA_HISTORY_BUFFER_SIZE];
-} TempHistoryBlob;
-
-static esp_err_t save_heart_history(const NeraAppState *state)
-{
-    if (state == nullptr || state->heart_history_count > NERA_HISTORY_BUFFER_SIZE) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(NERA_STORAGE_NAMESPACE, NVS_READWRITE, &handle);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    HeartHistoryBlob blob = {};
-    blob.count = state->heart_history_count;
-    memcpy(blob.values, state->heart_history, sizeof(blob.values));
-
-    err = nvs_set_blob(handle, NERA_HEART_HISTORY_KEY, &blob, sizeof(blob));
-    if (err == ESP_OK) {
-        err = nvs_commit(handle);
-    }
-    nvs_close(handle);
+#include <atomic>
+#include <math.h>
+#include <string.h>
+namespace {
+// El firmware anterior solo tenia sensores mock. Sus claves se conservan como demo.
+const char *history_space = NERA_USE_MOCK_SENSORS ? "nera" : "nera_real";
+struct HistoryBlob { uint8_t count; float values[NERA_HISTORY_BUFFER_SIZE]; };
+QueueHandle_t settings_queue = nullptr;
+std::atomic<esp_err_t> status{ESP_OK};
+bool valid(const HistoryBlob &b, bool heart) {
+    if (b.count > NERA_HISTORY_BUFFER_SIZE) return false;
+    for (unsigned i = 0; i < b.count; ++i)
+        if (!isfinite(b.values[i]) || (heart && b.values[i] <= 0)) return false;
+    return true;
+}
+esp_err_t write_blob(const char *key, const void *data, size_t size, const char *space = "nera") {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(space, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(h, key, data, size);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
     return err;
 }
-
-static esp_err_t save_temp_history(const NeraAppState *state)
-{
-    if (state == nullptr || state->temp_history_count > NERA_HISTORY_BUFFER_SIZE) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(NERA_STORAGE_NAMESPACE, NVS_READWRITE, &handle);
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    TempHistoryBlob blob = {};
-    blob.count = state->temp_history_count;
-    memcpy(blob.values, state->temp_history, sizeof(blob.values));
-    err = nvs_set_blob(handle, NERA_TEMP_HISTORY_KEY, &blob, sizeof(blob));
-    if (err == ESP_OK) {
-        err = nvs_commit(handle);
-    }
-    nvs_close(handle);
-    return err;
 }
-
-esp_err_t storage_manager_load_settings(NeraUserSettings *settings)
-{
-    if (settings == nullptr) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    *settings = {
-        .brightness = NERA_BL_DEFAULT,
-        .notifications_enabled = true,
-        .vibration_enabled = true,
-        .power_saver_enabled = false,
-    };
-
-    nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(NERA_STORAGE_NAMESPACE, NVS_READONLY, &handle);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        return ESP_OK;
-    }
-    if (err != ESP_OK) {
-        return err;
-    }
-
-    size_t size = sizeof(*settings);
-    err = nvs_get_blob(handle, NERA_SETTINGS_KEY, settings, &size);
-    nvs_close(handle);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        return ESP_OK;
-    }
-    if (err != ESP_OK || size != sizeof(*settings)) {
-        *settings = {};
-        settings->brightness = NERA_BL_DEFAULT;
-        return ESP_ERR_INVALID_SIZE;
-    }
+esp_err_t storage_manager_load_settings(NeraUserSettings *s) {
+    if (!s) return ESP_ERR_INVALID_ARG;
+    *s = {NERA_BL_DEFAULT, true, true, false};
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("nera", NVS_READONLY, &h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (err != ESP_OK) return err;
+    // Bytes explicitos para no interpretar un bool corrupto desde Flash.
+    uint8_t bytes[4] = {};
+    size_t size = sizeof(bytes);
+    err = nvs_get_blob(h, "settings", bytes, &size);
+    nvs_close(h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (err != ESP_OK) return err;
+    if (size != sizeof(bytes) || bytes[1] > 1 || bytes[2] > 1 || bytes[3] > 1) return ESP_ERR_INVALID_SIZE;
+    *s = {bytes[0], bytes[1] != 0, bytes[2] != 0, bytes[3] != 0};
     return ESP_OK;
 }
-
-esp_err_t storage_manager_save_settings(const NeraUserSettings *settings)
-{
-    if (settings == nullptr) {
-        return ESP_ERR_INVALID_ARG;
-    }
-
-    nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(NERA_STORAGE_NAMESPACE, NVS_READWRITE, &handle);
-    if (err == ESP_OK) {
-        err = nvs_set_blob(handle, NERA_SETTINGS_KEY, settings, sizeof(*settings));
-    }
-    if (err == ESP_OK) {
-        err = nvs_commit(handle);
-    }
-    if (handle != 0) {
-        nvs_close(handle);
-    }
-    return err;
+esp_err_t storage_manager_save_settings(const NeraUserSettings *s) {
+    if (!s) return ESP_ERR_INVALID_ARG;
+    const uint8_t bytes[] = {s->brightness, (uint8_t)s->notifications_enabled,
+                            (uint8_t)s->vibration_enabled, (uint8_t)s->power_saver_enabled};
+    return write_blob("settings", bytes, sizeof(bytes));
 }
-
-esp_err_t storage_manager_init(void)
-{
-    nvs_handle_t handle = 0;
-    esp_err_t err = nvs_open(NERA_STORAGE_NAMESPACE, NVS_READONLY, &handle);
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        NERA_LOGI(NERA_TAG_STORAGE, "Sin historial persistente; iniciando vacio");
-        return ESP_OK;
-    }
-    if (err != ESP_OK) {
-        NERA_LOGE(NERA_TAG_STORAGE, "No se pudo abrir NVS: %s", esp_err_to_name(err));
-        return err;
-    }
-
-    HeartHistoryBlob blob = {};
-    size_t blob_size = sizeof(blob);
-    err = nvs_get_blob(handle, NERA_HEART_HISTORY_KEY, &blob, &blob_size);
-    nvs_close(handle);
-
-    if (err == ESP_ERR_NVS_NOT_FOUND) {
-        NERA_LOGI(NERA_TAG_STORAGE, "Sin historial BPM persistente; iniciando vacio");
-    } else if (err != ESP_OK || blob_size != sizeof(blob) ||
-               blob.count > NERA_HISTORY_BUFFER_SIZE) {
-        NERA_LOGW(NERA_TAG_STORAGE, "Historial persistente invalido; ignorando datos");
-        return ESP_OK;
-    } else {
-        err = app_state_restore_heart_history(blob.values, blob.count);
-        if (err == ESP_OK) {
-            NERA_LOGI(NERA_TAG_STORAGE, "Historial BPM restaurado: %u muestras", blob.count);
-        }
-    }
-
-    nvs_handle_t temp_handle = 0;
-    if (nvs_open(NERA_STORAGE_NAMESPACE, NVS_READONLY, &temp_handle) == ESP_OK) {
-        TempHistoryBlob temp_blob = {};
-        size_t temp_size = sizeof(temp_blob);
-        esp_err_t temp_err = nvs_get_blob(temp_handle, NERA_TEMP_HISTORY_KEY,
-                                           &temp_blob, &temp_size);
-        nvs_close(temp_handle);
-        if (temp_err == ESP_OK && temp_size == sizeof(temp_blob) &&
-            temp_blob.count <= NERA_HISTORY_BUFFER_SIZE) {
-            app_state_restore_temp_history(temp_blob.values, temp_blob.count);
-            NERA_LOGI(NERA_TAG_STORAGE, "Historial temperatura restaurado: %u muestras",
-                      temp_blob.count);
-        }
-    }
-    return err;
+esp_err_t storage_manager_request_settings(const NeraUserSettings *s) {
+    if (!s || !settings_queue) return ESP_ERR_INVALID_STATE;
+    status.store(ESP_ERR_NOT_FINISHED);
+    return xQueueOverwrite(settings_queue, s) == pdTRUE ? ESP_OK : ESP_FAIL;
 }
-
-void storage_manager_task(void *arg)
-{
+esp_err_t storage_manager_settings_status(void) { return status.load(); }
+esp_err_t storage_manager_init(void) {
+    if (!settings_queue) settings_queue = xQueueCreate(1, sizeof(NeraUserSettings));
+    if (!settings_queue) return ESP_ERR_NO_MEM;
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(history_space, NVS_READONLY, &h);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (err != ESP_OK) return err;
+    const char *keys[] = {"heart_hist", "temp_hist"};
+    for (unsigned i = 0; i < 2; ++i) {
+        HistoryBlob b = {};
+        size_t size = sizeof(b);
+        err = nvs_get_blob(h, keys[i], &b, &size);
+        if (err == ESP_ERR_NVS_NOT_FOUND) continue;
+        if (err != ESP_OK || size != sizeof(b) || !valid(b, i == 0)) {
+            NERA_LOGW(NERA_TAG_STORAGE, "%s invalido; ignorado", keys[i]);
+            continue;
+        }
+        err = i == 0 ? app_state_restore_heart_history(b.values, b.count) :
+                       app_state_restore_temp_history(b.values, b.count);
+        if (err == ESP_OK) NERA_LOGI(NERA_TAG_STORAGE, "%s restaurado: %u", keys[i], b.count);
+    }
+    nvs_close(h);
+    return ESP_OK;
+}
+void storage_manager_task(void *arg) {
     (void)arg;
-    uint8_t last_saved_count = 0;
-    uint8_t last_saved_temp_count = 0;
-    TickType_t last_save_tick = xTaskGetTickCount();
-
+    HistoryBlob saved[2] = {};
+    TickType_t last_save = xTaskGetTickCount();
     while (true) {
-        NeraAppState state = {};
-        if (app_state_get(&state) == ESP_OK) {
-            const uint8_t count = state.heart_history_count;
-            const uint8_t temp_count = state.temp_history_count;
-            const TickType_t now = xTaskGetTickCount();
-            const bool batch_ready = count >= last_saved_count + NERA_STORAGE_BATCH_SIZE;
-            const bool interval_ready = (now - last_save_tick) >=
-                                        pdMS_TO_TICKS(NERA_STORAGE_SAVE_INTERVAL_MS);
-
-            if (count > last_saved_count && (batch_ready || interval_ready)) {
-                esp_err_t err = save_heart_history(&state);
-                if (err == ESP_OK) {
-                    last_saved_count = count;
-                    last_save_tick = now;
-                    NERA_LOGI(NERA_TAG_STORAGE, "Historial BPM guardado: %u muestras", count);
-                } else {
-                    NERA_LOGW(NERA_TAG_STORAGE, "No se pudo guardar historial: %s",
-                              esp_err_to_name(err));
-                }
-            }
-
-            const bool temp_batch_ready = temp_count >= last_saved_temp_count + NERA_STORAGE_BATCH_SIZE;
-            if (temp_count > last_saved_temp_count && (temp_batch_ready || interval_ready)) {
-                esp_err_t err = save_temp_history(&state);
-                if (err == ESP_OK) {
-                    last_saved_temp_count = temp_count;
-                    last_save_tick = now;
-                    NERA_LOGI(NERA_TAG_STORAGE, "Historial temperatura guardado: %u muestras",
-                              temp_count);
+        NeraUserSettings s;
+        if (settings_queue && xQueueReceive(settings_queue, &s, 0) == pdTRUE) {
+            esp_err_t err = storage_manager_save_settings(&s);
+            if (uxQueueMessagesWaiting(settings_queue) == 0) status.store(err);
+            if (err != ESP_OK) NERA_LOGW(NERA_TAG_STORAGE, "Ajustes: %s", esp_err_to_name(err));
+        }
+        const TickType_t now = xTaskGetTickCount();
+        if (now - last_save >= pdMS_TO_TICKS(60000)) {
+            last_save = now;
+            NeraAppState state = {};
+            if (app_state_get(&state) == ESP_OK) {
+                for (unsigned i = 0; i < 2; ++i) {
+                    HistoryBlob b = {};
+                    b.count = i == 0 ? state.heart_history_count : state.temp_history_count;
+                    memcpy(b.values, i == 0 ? state.heart_history : state.temp_history, sizeof(b.values));
+                    if (memcmp(&saved[i], &b, sizeof(b)) == 0 || !valid(b, i == 0)) continue;
+                    esp_err_t err = write_blob(i == 0 ? "heart_hist" : "temp_hist", &b, sizeof(b), history_space);
+                    if (err == ESP_OK) saved[i] = b;
+                    else NERA_LOGW(NERA_TAG_STORAGE, "Historial: %s", esp_err_to_name(err));
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(NERA_SENSOR_UPDATE_INTERVAL_MS));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

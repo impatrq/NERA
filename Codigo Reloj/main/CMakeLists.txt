@@ -30,6 +30,11 @@ idf_component_register(
         "lvgl/lvgl_task.cpp"
         "ui/ui_manager.cpp"
         "ui/screens/splash_screen.cpp"
+        "ui/screens/watchface.cpp"
+        "ui/screens/health_screen.cpp"
+        "ui/screens/metric_screen.cpp"
+        "ui/screens/sleep_screen.cpp"
+        "ui/screens/settings_screen.cpp"
         "ui/components/ui_components.cpp"
 
     INCLUDE_DIRS

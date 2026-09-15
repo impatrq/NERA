@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "sdkconfig.h"
+
 // =============================================================================
 // VERSIÓN DEL FIRMWARE
 // =============================================================================
@@ -109,7 +111,11 @@
 
 #define NERA_SENSOR_UPDATE_INTERVAL_MS  1000
 #define NERA_HISTORY_BUFFER_SIZE        60
+#ifdef CONFIG_NERA_USE_MOCK_SENSORS
 #define NERA_USE_MOCK_SENSORS           1
+#else
+#define NERA_USE_MOCK_SENSORS           0
+#endif
 
 // =============================================================================
 // TAREAS FREERTOS

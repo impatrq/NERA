@@ -54,8 +54,8 @@ esp_lcd_panel_handle_t display_driver_get_panel_handle(void);
  *
  * @param x_start Coordenada X inicial (0 a NERA_LCD_WIDTH - 1).
  * @param y_start Coordenada Y inicial (0 a NERA_LCD_HEIGHT - 1).
- * @param x_end   Coordenada X final (inclusiva).
- * @param y_end   Coordenada Y final (inclusiva).
+ * @param x_end   Coordenada X final (exclusiva).
+ * @param y_end   Coordenada Y final (exclusiva).
  * @param color_data Puntero al buffer de píxeles en formato RGB565 (16 bits por pixel).
  *
  * @return ESP_OK si la transferencia fue enviada correctamente al bus SPI.
