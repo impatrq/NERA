@@ -20,6 +20,8 @@
 #include "esp_timer.h"
 #include "utils/logger.h"
 #include "sdkconfig.h"
+#include <math.h>
+#include <string.h>
 
 // Tag de logging específico para este módulo.
 static const char *TAG = NERA_TAG_STATE;
@@ -171,20 +173,27 @@ void app_state_set_mode(NeraSystemMode mode) {
 void app_state_set_heart(const NeraHeartData *data) {
     if (data == NULL || !state_lock()) return;
     memcpy(&s_state.heart, data, sizeof(NeraHeartData));
-    append_history_value(s_state.heart_history, &s_state.heart_history_count, data->bpm);
+    s_state.heart.is_valid = data->is_valid && data->sensor_ok && isfinite(data->bpm) && data->bpm > 0;
+    if (s_state.heart.is_valid) {
+        append_history_value(s_state.heart_history, &s_state.heart_history_count, data->bpm);
+    }
     state_unlock();
 }
 
 void app_state_set_temp(const NeraTempData *data) {
     if (data == NULL || !state_lock()) return;
     memcpy(&s_state.temp, data, sizeof(NeraTempData));
-    append_history_value(s_state.temp_history, &s_state.temp_history_count, data->celsius);
+    s_state.temp.is_valid = data->is_valid && data->sensor_ok && isfinite(data->celsius);
+    if (s_state.temp.is_valid) {
+        append_history_value(s_state.temp_history, &s_state.temp_history_count, data->celsius);
+    }
     state_unlock();
 }
 
 void app_state_set_battery(const NeraBatteryData *data) {
     if (data == NULL || !state_lock()) return;
     memcpy(&s_state.battery, data, sizeof(NeraBatteryData));
+    s_state.battery.sensor_ok = data->sensor_ok && data->percentage <= 100;
     state_unlock();
 }
 

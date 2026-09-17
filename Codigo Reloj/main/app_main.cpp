@@ -6,7 +6,7 @@
  * - Se inicializa el sistema base (NVS, AppState, EventBus).
  * - Se inicializa el PWM de Backlight (LEDC) y se enciende la pantalla.
  * - Se inicializa el bus SPI con DMA y el controlador ST7789T3 (240x320 px).
- * - Se dibuja el patrón de prueba visual de NERA para verificar hardware físico.
+ * - LVGL presenta el splash y las seis vistas; los mocks se activan por Kconfig.
  */
 
 #include <stdio.h>
@@ -40,6 +40,14 @@
 #include "sensors/battery/battery_manager.h"
 
 static const char *TAG = NERA_TAG_MAIN;
+
+// Cada tarea necesita stack propio. Informar una falta de RAM evita fallos silenciosos.
+static void start_task(TaskFunction_t entry, const char *name, uint32_t stack,
+                       void *arg, UBaseType_t priority, TaskHandle_t *handle) {
+    if (xTaskCreate(entry, name, stack, arg, priority, handle) != pdPASS)
+        NERA_LOGE(TAG, "No se pudo crear tarea %s (RAM insuficiente)", name);
+}
+
 static MockHeartRateSensor s_heart_rate_sensor;
 static HeartRateFilter s_heart_rate_filter;
 static MockTemperatureSensor s_temperature_sensor;
@@ -105,9 +113,8 @@ static esp_err_t init_nvs(void) {
 
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || 
         err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        NERA_LOGW(TAG, "NVS: partición corrupta o versión incompatible. Borrando...");
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        err = nvs_flash_init();
+        // No borrar historiales automaticamente ante incompatibilidad o falta de espacio.
+        NERA_LOGW(TAG, "NVS necesita recuperacion manual; se conservan los datos");
     }
 
     if (err != ESP_OK) {
@@ -219,8 +226,7 @@ extern "C" void app_main(void) {
     // --- Paso 2: NVS ---
     NERA_LOGI(TAG, "[1/5] Inicializando NVS...");
     if (init_nvs() != ESP_OK) {
-        NERA_LOGE(TAG, "Error crítico en NVS.");
-        return;
+        NERA_LOGW(TAG, "Continuando sin persistencia; los ajustes no sobreviviran al reinicio");
     }
 
     // --- Paso 3: Estado global ---
@@ -258,7 +264,8 @@ extern "C" void app_main(void) {
         NERA_LOGE(TAG, "Error inicializando backlight: %s", esp_err_to_name(ret));
         return;
     }
-    power_manager_init();
+    ret = power_manager_init();
+    if (ret != ESP_OK) NERA_LOGW(TAG, "No se pudo aplicar brillo inicial: %s", esp_err_to_name(ret));
     ble_manager_init();
 
     // El patrón de colores se reserva para el diagnóstico del hardware.
@@ -273,20 +280,9 @@ extern "C" void app_main(void) {
     // Actualizar modo a READY
     app_state_set_mode(NERA_MODE_READY);
 
-    NERA_LOGI(TAG, "");
-    NERA_LOGI(TAG, "+----------------------------------------+");
-    NERA_LOGI(TAG, "| NERA Firmware - Plataforma modular    |");
-    NERA_LOGI(TAG, "| LCD, LVGL, sensores y servicios OK    |");
-    NERA_LOGI(TAG, "| Display 240x320 activo                |");
-    NERA_LOGI(TAG, "|                                        |");
-    NERA_LOGI(TAG, "| UI profesional y servicios activos    |");
-    NERA_LOGI(TAG, "| Historial persistente preparado        |");
-    NERA_LOGI(TAG, "+----------------------------------------+");
-    NERA_LOGI(TAG, "");
-
     // --- Paso 8: Crear tarea LVGL para UI ---
     NERA_LOGI(TAG, "[6/6] Lanzando motor gráfico LVGL v8...");
-    xTaskCreate(
+    start_task(
         lvgl_task,
         "nera_lvgl_ui",
         NERA_UI_TASK_STACK_SIZE,
@@ -295,29 +291,19 @@ extern "C" void app_main(void) {
         NULL
     );
 
-    NERA_LOGI(TAG, "");
-    NERA_LOGI(TAG, "+----------------------------------------+");
-    NERA_LOGI(TAG, "| NERA Firmware - Etapa 3A               |");
-    NERA_LOGI(TAG, "| Historial BPM persistente en NVS       |");
-    NERA_LOGI(TAG, "| Carga al arranque y guardado por lotes |");
-    NERA_LOGI(TAG, "|                                        |");
-    NERA_LOGI(TAG, "| Siguiente paso: Etapa 3B               |");
-    NERA_LOGI(TAG, "| Persistencia de temperatura y ajustes |");
-    NERA_LOGI(TAG, "+----------------------------------------+");
-    NERA_LOGI(TAG, "");
-
     // Monitoreo de memoria en background
-    xTaskCreate(memory_monitor_task, "nera_mem_mon", 2048, NULL, 1, NULL);
-    xTaskCreate(heart_rate_task, "nera_hr_mock", NERA_SENSOR_TASK_STACK_SIZE, NULL,
+    start_task(memory_monitor_task, "nera_mem_mon", 2048, NULL, 1, NULL);
+    if (NERA_USE_MOCK_SENSORS) {
+        start_task(heart_rate_task, "nera_hr_mock", NERA_SENSOR_TASK_STACK_SIZE, NULL,
                 NERA_SENSOR_TASK_PRIORITY, NULL);
-    xTaskCreate(temperature_task, "nera_temp_mock", NERA_SENSOR_TASK_STACK_SIZE, NULL,
+        start_task(temperature_task, "nera_temp_mock", NERA_SENSOR_TASK_STACK_SIZE, NULL,
                 NERA_SENSOR_TASK_PRIORITY, NULL);
-    xTaskCreate(battery_mock_task, "nera_battery_mock", NERA_SENSOR_TASK_STACK_SIZE, NULL,
+        start_task(battery_mock_task, "nera_battery_mock", NERA_SENSOR_TASK_STACK_SIZE, NULL,
                 NERA_SENSOR_TASK_PRIORITY, NULL);
-    xTaskCreate(storage_manager_task, "nera_storage", NERA_STORAGE_TASK_STACK_SIZE, NULL,
+    }
+    start_task(storage_manager_task, "nera_storage", NERA_STORAGE_TASK_STACK_SIZE, NULL,
                 NERA_STORAGE_TASK_PRIORITY, NULL);
-    xTaskCreate(ble_manager_task, "nera_ble", NERA_BLE_TASK_STACK_SIZE, NULL,
-                NERA_BLE_TASK_PRIORITY, NULL);
+    // BLE no inicia una tarea vacia mientras el perfil de radio no exista.
 
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(10000));

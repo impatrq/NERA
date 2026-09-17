@@ -52,7 +52,6 @@ esp_err_t display_manager_init(void) {
     ledc_channel.speed_mode     = LEDC_LOW_SPEED_MODE;
     ledc_channel.channel        = NERA_BL_LEDC_CHANNEL;
     ledc_channel.timer_sel      = NERA_BL_LEDC_TIMER;
-    ledc_channel.intr_type      = LEDC_INTR_DISABLE;
     ledc_channel.gpio_num       = NERA_LCD_PIN_BL;
     ledc_channel.duty           = 0; // Inicia apagado para evitar destellos
     ledc_channel.hpoint         = 0;
@@ -78,14 +77,13 @@ esp_err_t display_manager_init(void) {
 esp_err_t display_manager_set_brightness(uint8_t brightness) {
     if (!s_is_initialized) return ESP_ERR_INVALID_STATE;
 
-    s_current_brightness = brightness;
-
     esp_err_t ret = ledc_set_duty_and_update(LEDC_LOW_SPEED_MODE, NERA_BL_LEDC_CHANNEL, brightness, 0);
     if (ret != ESP_OK) {
         NERA_LOGE(TAG, "Error actualizando duty cycle de brillo: %s", esp_err_to_name(ret));
         return ret;
     }
 
+    s_current_brightness = brightness;
     return ESP_OK;
 }
 

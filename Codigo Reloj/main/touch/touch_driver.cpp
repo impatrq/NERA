@@ -1,3 +1,5 @@
+/** Input CST816D existente: comprueba presencia I2C antes de registrarse y
+ * descarta coordenadas fuera del LCD. Entrega estados a la tarea LVGL. */
 #include "touch_driver.h"
 
 #include "driver/i2c.h"
@@ -32,6 +34,11 @@ esp_err_t touch_driver_init(void)
         return ret;
     }
 
+    uint8_t fingers = 0;
+    const uint8_t address = 0x02;
+    ret = i2c_master_write_read_device(NERA_I2C_PORT, NERA_TOUCH_I2C_ADDR,
+                                      &address, 1, &fingers, 1, pdMS_TO_TICKS(30));
+    if (ret != ESP_OK) return ret;
     s_initialized = true;
     NERA_LOGI(TAG, "CST816D touch inicializado en I2C");
     return ESP_OK;
@@ -62,5 +69,6 @@ void touch_driver_read(lv_indev_drv_t *drv, lv_indev_data_t *data)
 
     data->point.x = (lv_coord_t)(((registers[1] & 0x0F) << 8) | registers[2]);
     data->point.y = (lv_coord_t)(((registers[3] & 0x0F) << 8) | registers[4]);
-    data->state = LV_INDEV_STATE_PRESSED;
+    if (data->point.x < NERA_LCD_WIDTH && data->point.y < NERA_LCD_HEIGHT)
+        data->state = LV_INDEV_STATE_PRESSED;
 }

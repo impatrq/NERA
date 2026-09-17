@@ -1,4 +1,7 @@
+/** Arranque visual breve mediante timer LVGL; al terminar entrega la navegacion
+ * a ui_manager sin bloquear las tareas de sensores o almacenamiento. */
 #include "ui/screens/splash_screen.h"
+#include "ui/theme/nera_theme.h"
 #include "ui/components/ui_components.h"
 
 #include "nera_config.h"
@@ -21,18 +24,19 @@ esp_err_t splash_screen_show(lv_obj_t *watch_screen)
 
     lv_obj_t *screen = lv_obj_create(NULL);
     nera_ui::apply_screen_base_style(screen);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(nera_theme::bg), 0);
     lv_obj_set_style_pad_all(screen, 0, 0);
 
     const lv_coord_t content_width = lv_disp_get_hor_res(NULL) - 32;
-    lv_obj_t *brand = nera_ui::create_label(screen, &lv_font_montserrat_28, NERA_COLOR_ACCENT);
+    lv_obj_t *brand = nera_ui::create_label(screen, &lv_font_montserrat_48, nera_theme::accent);
     lv_label_set_text(brand, "NERA");
     lv_obj_set_width(brand, content_width);
     lv_obj_set_style_text_align(brand, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(brand, LV_ALIGN_CENTER, 0, -24);
 
     lv_obj_t *status = nera_ui::create_label(screen, &lv_font_montserrat_14,
-                                           NERA_COLOR_TEXT_SECONDARY);
-    lv_label_set_text(status, "Inicializando sensores...");
+                                           nera_theme::muted);
+    lv_label_set_text(status, "Inicializando...");
     lv_obj_set_width(status, content_width);
     lv_label_set_long_mode(status, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(status, LV_TEXT_ALIGN_CENTER, 0);
