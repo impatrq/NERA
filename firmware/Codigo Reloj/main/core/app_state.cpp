@@ -170,6 +170,12 @@ void app_state_set_mode(NeraSystemMode mode) {
     state_unlock();
 }
 
+void app_state_set_ble_state(NeraBLEState state) {
+    if (!state_lock()) return;
+    s_state.ble_state = state;
+    state_unlock();
+}
+
 void app_state_set_heart(const NeraHeartData *data) {
     if (data == NULL || !state_lock()) return;
     memcpy(&s_state.heart, data, sizeof(NeraHeartData));
@@ -200,6 +206,17 @@ void app_state_set_battery(const NeraBatteryData *data) {
 void app_state_set_datetime(const NeraDateTime *dt) {
     if (dt == NULL || !state_lock()) return;
     memcpy(&s_state.datetime, dt, sizeof(NeraDateTime));
+    state_unlock();
+}
+
+void app_state_set_motion(const NeraMotionData *data) {
+    if (data == NULL || !state_lock()) return;
+    s_state.motion = *data;
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!isfinite(data->acceleration_g[i]) || !isfinite(data->rotation_dps[i]))
+            s_state.motion.is_valid = false;
+    }
+    s_state.motion.is_valid = s_state.motion.is_valid && data->sensor_ok;
     state_unlock();
 }
 

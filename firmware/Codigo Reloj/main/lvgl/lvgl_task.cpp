@@ -1,114 +1,68 @@
-/**
- * @file lvgl_task.cpp
- * @brief Implementación de la tarea FreeRTOS para LVGL.
- *
- * Esta es la tarea responsable de:
- * 1. Ejecutar el bucle principal de eventos de LVGL (lv_task_handler)
- * 2. Procesar animaciones y interacciones
- * 3. Refrescar la pantalla
- *
- * Ejecuta a baja prioridad (5) con stack de 8 KB.
- */
-
+/** Tarea grafica: inicializa LVGL, registra tactil y procesa la pantalla. */
 #include "lvgl_task.h"
 #include "lvgl_port.h"
 #include "nera_config.h"
+#include "display/display_manager.h"
 #include "ui/ui_manager.h"
+#include "touch/touch_driver.h"
+#include "connectivity/ble_manager.h"
+#include "services/history_service.h"
 #include "utils/logger.h"
 #include "lvgl.h"
-#include "touch/touch_driver.h"
+#if CONFIG_NERA_ESPNOW_DIAGNOSTIC
+#include "connectivity/espnow_diagnostic.h"
+#endif
 
-static const char *TAG = NERA_TAG_LVGL;
-
-// =============================================================================
-// FUNCIÓN PÚBLICA: Tarea LVGL
-// =============================================================================
-
-void lvgl_task(void *pvParameters)
-{
-    NERA_LOGI(TAG, "LVGL task started (stack: %d bytes, priority: %d)",
-              NERA_UI_TASK_STACK_SIZE, NERA_UI_TASK_PRIORITY);
-
-    // =========================================================================
-    // FASE 1: Inicializar el puerto LVGL
-    // =========================================================================
-
-    /**
-     * lvgl_port_init() hace toda la configuración pesada:
-     * - Asigna buffers en PSRAM
-     * - Inicializa LVGL
-     * - Configura el driver de pantalla
-     * - Inicia el timer de ticks
-     *
-     * Si esto falla, el smartwatch no puede mostrar interfaz.
-     */
-    esp_err_t ret = lvgl_port_init();
-    if (ret != ESP_OK) {
-        NERA_LOGE(TAG, "Failed to initialize LVGL port: 0x%x", ret);
-        // No hay recuperación posible. La tarea se suspenderá.
-        vTaskSuspend(NULL);
+void lvgl_task(void *) {
+    if (lvgl_port_init()!=ESP_OK) {
+        ESP_LOGE("NERA/LVGL", "No se pudo iniciar el motor grafico");
+        vTaskDelete(nullptr);
         return;
     }
-
-    ret = touch_driver_init();
-    if (ret != ESP_OK) {
-        NERA_LOGW(TAG, "Touch no disponible; UI continuará sin navegación táctil");
+    const esp_err_t touch=touch_driver_init();
+    if (touch==ESP_OK) {
+        static lv_indev_drv_t input;
+        lv_indev_drv_init(&input);
+        input.type=LV_INDEV_TYPE_POINTER;
+        input.read_cb=touch_driver_read;
+        lv_indev_drv_register(&input);
+    } else ESP_LOGW("NERA/TOUCH", "Tactil no disponible: %s",esp_err_to_name(touch));
+    ESP_ERROR_CHECK(ui_manager_init());
+    ESP_LOGI("NERA/LVGL", "Pantalla lista");
+#if CONFIG_NERA_ESPNOW_DIAGNOSTIC
+    // IMPORTANTE: primero reservar objetos/buffers y terminar el primer dibujo.
+    // La radio no modifica LVGL y un fallo suyo no detiene la pantalla.
+    lv_timer_handler();
+    const esp_err_t radio=espnow_diagnostic_init();
+    if (radio!=ESP_OK)
+        ESP_LOGW("NERA/RADIO","No se pudo iniciar ESP-NOW: %s; LCD continua",esp_err_to_name(radio));
+#endif
+    const esp_err_t history = history_service_init();
+    if (history == ESP_OK) {
+        if (xTaskCreate(history_service_task, "nera_history", 4096, nullptr, 2, nullptr) != pdPASS)
+            ESP_LOGE("NERA/HISTORY", "No se pudo crear la tarea de historial");
+    } else {
+        ESP_LOGW("NERA/HISTORY", "Historial deshabilitado: %s", esp_err_to_name(history));
     }
-    static lv_indev_drv_t indev_drv;
-    lv_indev_drv_init(&indev_drv);
-    indev_drv.type = LV_INDEV_TYPE_POINTER;
-    indev_drv.read_cb = touch_driver_read;
-    lv_indev_drv_register(&indev_drv);
-
-    // =========================================================================
-    // FASE 2: Crear la interfaz inicial
-    // =========================================================================
-
-    ret = ui_manager_init();
-    if (ret != ESP_OK) {
-        NERA_LOGE(TAG, "Failed to initialize UI manager: 0x%x", ret);
-        vTaskSuspend(NULL);
-        return;
+    // Iniciar BLE despues de reservar la pantalla; publica solo snapshots reales.
+    const esp_err_t ble = ble_manager_init();
+    if (ble == ESP_OK) {
+        if (xTaskCreate(ble_manager_task, "nera_ble_data", 4096, nullptr, 2, nullptr) != pdPASS)
+            ESP_LOGE("NERA/BLE", "No se pudo crear la tarea de datos BLE");
+    } else {
+        ESP_LOGW("NERA/BLE", "No se pudo iniciar BLE: %s", esp_err_to_name(ble));
     }
-
-    NERA_LOGI(TAG, "UI initialization complete. Starting event loop...");
-
-    // =========================================================================
-    // FASE 3: Bucle principal de LVGL
-    // =========================================================================
-
-    /**
-     * CONCEPTO: Bucle de eventos
-     * Un bucle de eventos es el corazón de cualquier interfaz gráfica:
-     *
-     *   while (running) {
-     *       process_events();     // ¿Tocó el usuario?
-     *       animate_widgets();    // Animar transiciones
-     *       redraw_changed();     // Redibujar lo que cambió
-     *       sleep_briefly();      // No consumir 100% CPU
-     *   }
-     *
-     * lv_task_handler() hace todo esto.
-     *
-     * Parámetro de lv_task_handler:
-     * Retorna la cantidad de milisegundos hasta que el siguiente evento
-     * sucederá. Nosotros dormimos ese tiempo para ahorrar energía.
-     */
-    while (1) {
-        // Procesar eventos de LVGL
-        uint32_t delay_ms = lv_task_handler();
-
-        // Evitar que el delay sea demasiado corto (mínimo 1 ms)
-        if (delay_ms < 1) {
-            delay_ms = 1;
-        }
-
-        // Dormir sin bloquear otras tareas de FreeRTOS
-        if (delay_ms > 20) delay_ms = 20;
-        TickType_t ticks = pdMS_TO_TICKS(delay_ms);
-        vTaskDelay(ticks > 0 ? ticks : 1);
+    for (;;) {
+        uint32_t delay=lv_timer_handler();
+        // Solo el toque reinicia el minuto. Las lecturas se siguen actualizando
+        // aunque la retroiluminacion este apagada.
+        const bool awake = lv_disp_get_inactive_time(lv_disp_get_default()) < CONFIG_NERA_SCREEN_TIMEOUT_MS;
+        const esp_err_t screen = display_manager_set_screen_awake(awake);
+        if (screen != ESP_OK)
+            ESP_LOGW("NERA/LVGL", "No se pudo cambiar backlight: %s", esp_err_to_name(screen));
+        if (delay<1) delay=1;
+        if (delay>20) delay=20;
+        const TickType_t ticks=pdMS_TO_TICKS(delay);
+        vTaskDelay(ticks ? ticks : 1);
     }
-
-    // Este punto nunca se alcanza, pero lo dejamos para claridad de código.
-    vTaskSuspend(NULL);
 }

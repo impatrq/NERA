@@ -42,6 +42,8 @@ void metric_screen_update(WatchView &v, const NeraHealthSnapshot &d, bool therma
     const bool valid = thermal ? d.temperature.is_valid : d.heart.is_valid;
     set(v.labels[1], valid ? (d.uses_mock_data ? "Datos de demostracion" : "Lectura del sensor") :
         "Esperando lectura");
+    if (thermal && valid && !d.uses_mock_data)
+        set(v.labels[1], "Objeto IR / MLX90614");
     const auto &state = d.state;
     const float *values = thermal ? state.temp_history : state.heart_history;
     const uint8_t count = thermal ? state.temp_history_count : state.heart_history_count;

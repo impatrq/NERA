@@ -2,6 +2,7 @@
  * protegido por AppState; nunca accede a drivers desde la tarea grafica. */
 #include "services/health_service.h"
 #include <math.h>
+#include "esp_timer.h"
 
 #include "utils/logger.h"
 
@@ -39,7 +40,15 @@ esp_err_t health_service_get_snapshot(NeraHealthSnapshot *snapshot)
     snapshot->heart = state.heart;
     snapshot->temperature = state.temp;
     snapshot->battery = state.battery;
-    snapshot->overall_ok = state.heart.is_valid && state.temp.is_valid &&
+    // No mantener una lectura real como actual si la tarea/bus deja de responder.
+    if (!state.use_mocks) {
+        const int64_t now = esp_timer_get_time();
+        if (state.heart.last_update_us <= 0 || now - state.heart.last_update_us > 3000000)
+            snapshot->heart.is_valid = false;
+        if (state.temp.last_update_us <= 0 || now - state.temp.last_update_us > 3000000)
+            snapshot->temperature.is_valid = false;
+    }
+    snapshot->overall_ok = snapshot->heart.is_valid && snapshot->temperature.is_valid &&
                            state.battery.sensor_ok;
     snapshot->uses_mock_data = state.use_mocks;
     return ESP_OK;

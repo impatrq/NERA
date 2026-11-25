@@ -125,6 +125,16 @@ typedef struct {
     bool     synced;  ///< true si la hora fue sincronizada (BLE/WiFi/RTC)
 } NeraDateTime;
 
+// Lecturas fisicas del MPU6050, sin convertir movimiento en fases de sueno.
+typedef struct {
+    float acceleration_g[3];
+    float rotation_dps[3];
+    bool is_moving;       ///< Movimiento reciente estimado, no una fase de sueno.
+    bool is_valid;
+    bool sensor_ok;
+    int64_t last_update_us;
+} NeraMotionData;
+
 /**
  * @brief Estado global completo del sistema NERA.
  *
@@ -138,6 +148,7 @@ typedef struct {
     NeraHeartData   heart;                 ///< Datos del corazón/BPM
     NeraTempData    temp;                  ///< Datos de temperatura
     NeraBatteryData battery;               ///< Datos de batería
+    NeraMotionData motion;
     NeraDateTime    datetime;              ///< Fecha y hora actual
     float           heart_history[NERA_HISTORY_BUFFER_SIZE];
     float           temp_history[NERA_HISTORY_BUFFER_SIZE];
@@ -178,6 +189,9 @@ esp_err_t app_state_get(NeraAppState *state);
  */
 void app_state_set_mode(NeraSystemMode mode);
 
+/** Estado de radio que muestran las pantallas; se actualiza desde NimBLE. */
+void app_state_set_ble_state(NeraBLEState state);
+
 /**
  * @brief Actualiza los datos de frecuencia cardíaca.
  * @param data Nuevos datos del sensor cardíaco.
@@ -195,6 +209,7 @@ void app_state_set_temp(const NeraTempData *data);
  * @param data Nuevos datos de batería.
  */
 void app_state_set_battery(const NeraBatteryData *data);
+void app_state_set_motion(const NeraMotionData *data);
 
 /**
  * @brief Actualiza la fecha y hora del sistema.

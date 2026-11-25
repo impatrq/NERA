@@ -11,10 +11,14 @@ void health_screen_create(WatchView &v) {
     const char *names[] = {"Pulso", "Temp.", "Sueno"};
     const WatchPage pages[] = {WatchPage::Heart, WatchPage::Temperature, WatchPage::Sleep};
     for (int i = 0; i < 3; ++i) {
-        auto *row = metric_row(v.root, 52 + i * 64, inner, 58, names[i], &v.labels[i]);
+        auto *row = metric_row(v.root, 52 + i * 57, inner, 52, names[i], &v.labels[i]);
         watch_navigate_on_tap(row, pages[i]);
     }
-    v.labels[3] = label(v.root, margin, 246, inner, &lv_font_montserrat_14, muted);
+    // MODIFICABLE: lectura simple del MPU; no es una medida de sueno.
+    label(v.root, margin, 228, 90, &lv_font_montserrat_14, muted, "Movimiento");
+    v.labels[4] = label(v.root, 106, 228, 118, &lv_font_montserrat_14, text);
+    lv_label_set_long_mode(v.labels[4], LV_LABEL_LONG_DOT);
+    v.labels[3] = label(v.root, margin, 250, inner, &lv_font_montserrat_14, muted);
     lv_label_set_long_mode(v.labels[3], LV_LABEL_LONG_DOT);
 }
 void health_screen_update(WatchView &v, const NeraHealthSnapshot &d) {
@@ -29,6 +33,14 @@ void health_screen_update(WatchView &v, const NeraHealthSnapshot &d) {
                                  (d.sleep.light_minutes + d.sleep.deep_minutes) % 60);
     else snprintf(value, sizeof(value), "--");
     set(v.labels[2], value);
+    // FUNCIONAL: mostrar solo lecturas recientes; no conservar un estado viejo
+    // si el MPU se desconecta mientras Salud permanece abierta.
+    const NeraMotionData &motion = d.state.motion;
+    const bool motion_current = motion.sensor_ok && motion.is_valid &&
+        motion.last_update_us > 0 &&
+        esp_timer_get_time() - motion.last_update_us <= 3000000;
+    set(v.labels[4], motion_current ? (motion.is_moving ? "En movimiento" : "Sin movimiento")
+                                    : "Sin lectura");
     const int64_t last = d.heart.last_update_us > d.temperature.last_update_us ?
                          d.heart.last_update_us : d.temperature.last_update_us;
     if (last > 0) snprintf(value, sizeof(value), "%s / hace %lld s",
