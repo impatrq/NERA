@@ -14,7 +14,8 @@ static NeraSleepData s_sleep_data = {
 
 esp_err_t sleep_service_init(void)
 {
-    NERA_LOGI(NERA_TAG_SLEEP, "SleepService inicializado en modo estimacion");
+    NERA_LOGI(NERA_TAG_SLEEP, "%s", NERA_USE_MOCK_SENSORS ?
+              "SleepService: demostracion" : "SleepService: sin algoritmo validado; sin datos");
     return ESP_OK;
 }
 

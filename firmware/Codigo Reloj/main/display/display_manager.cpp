@@ -24,8 +24,18 @@
 
 static const char *TAG = NERA_TAG_POWER;
 
-static uint8_t s_current_brightness = 0;
+static uint8_t s_requested_brightness = NERA_BL_DEFAULT;
 static bool s_is_initialized = false;
+static bool s_screen_awake = true;
+
+static esp_err_t apply_backlight(uint8_t brightness) {
+    esp_err_t ret = ledc_set_duty_and_update(LEDC_LOW_SPEED_MODE, NERA_BL_LEDC_CHANNEL, brightness, 0);
+    if (ret != ESP_OK) {
+        NERA_LOGE(TAG, "Error actualizando duty cycle de brillo: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    return ESP_OK;
+}
 
 esp_err_t display_manager_init(void) {
     if (s_is_initialized) return ESP_OK;
@@ -76,29 +86,34 @@ esp_err_t display_manager_init(void) {
 
 esp_err_t display_manager_set_brightness(uint8_t brightness) {
     if (!s_is_initialized) return ESP_ERR_INVALID_STATE;
-
-    esp_err_t ret = ledc_set_duty_and_update(LEDC_LOW_SPEED_MODE, NERA_BL_LEDC_CHANNEL, brightness, 0);
-    if (ret != ESP_OK) {
-        NERA_LOGE(TAG, "Error actualizando duty cycle de brillo: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    s_current_brightness = brightness;
-    return ESP_OK;
+    esp_err_t ret = apply_backlight(s_screen_awake ? brightness : 0);
+    if (ret == ESP_OK) s_requested_brightness = brightness;
+    return ret;
 }
 
 uint8_t display_manager_get_brightness(void) {
-    return s_current_brightness;
+    return s_requested_brightness;
+}
+
+esp_err_t display_manager_set_screen_awake(bool awake) {
+    if (!s_is_initialized) return ESP_ERR_INVALID_STATE;
+    if (awake == s_screen_awake) return ESP_OK;
+    esp_err_t ret = apply_backlight(awake ? s_requested_brightness : 0);
+    if (ret == ESP_OK) s_screen_awake = awake;
+    return ret;
 }
 
 esp_err_t display_manager_fade_brightness(uint8_t target_brightness, uint32_t duration_ms) {
     if (!s_is_initialized) return ESP_ERR_INVALID_STATE;
-
-    s_current_brightness = target_brightness;
+    if (!s_screen_awake) {
+        s_requested_brightness = target_brightness;
+        return ESP_OK;
+    }
 
     esp_err_t ret = ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, NERA_BL_LEDC_CHANNEL, target_brightness, duration_ms);
     if (ret == ESP_OK) {
-        ledc_fade_start(LEDC_LOW_SPEED_MODE, NERA_BL_LEDC_CHANNEL, LEDC_FADE_NO_WAIT);
+        ret = ledc_fade_start(LEDC_LOW_SPEED_MODE, NERA_BL_LEDC_CHANNEL, LEDC_FADE_NO_WAIT);
+        if (ret == ESP_OK) s_requested_brightness = target_brightness;
     }
     return ret;
 }

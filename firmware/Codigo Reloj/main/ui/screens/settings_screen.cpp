@@ -1,5 +1,5 @@
 /** Ajustes tactiles: PWM inmediato y guardado mediante cola de StorageManager.
- * BLE, vibracion y avisos se muestran deshabilitados hasta tener soporte real. */
+ * El control BLE sigue en la app; vibracion y avisos no tienen soporte real. */
 #include "ui/screens/watch_screens.h"
 #include "ui/theme/nera_theme.h"
 #include "power/power_manager.h"
@@ -72,7 +72,7 @@ void settings_screen_create(WatchView &v, bool quick) {
         label(settings, 12, 12, inner - 24, &lv_font_montserrat_20, text, LV_SYMBOL_SETTINGS " Ajustes");
         watch_navigate_on_tap(settings, WatchPage::Settings);
     } else label(content, margin, 310, inner, &lv_font_montserrat_14, muted,
-          "NERA " NERA_FW_VERSION_STR "\nESP32-S3 / LCD 240x320\nBLE, avisos y vibracion\nno disponibles");
+          "NERA " NERA_FW_VERSION_STR "\nESP32-S3 / LCD 240x320\nBLE: conectar desde la app\nAvisos y vibracion pendientes");
     v.labels[1] = label(content, margin, quick ? 204 : 390, inner, &lv_font_montserrat_14, muted, "");
 }
 void settings_screen_update(WatchView &v) {

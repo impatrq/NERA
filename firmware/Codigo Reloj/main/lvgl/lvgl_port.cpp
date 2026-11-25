@@ -12,10 +12,16 @@
 #include "nera_config.h"
 #include "utils/logger.h"
 #include "esp_heap_caps.h"
+#include "lvgl/nera_lvgl_memory.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/timers.h"
 
 static const char *TAG = NERA_TAG_LVGL;
+static void *ui_memory_pool = nullptr;
+
+extern "C" void *nera_lvgl_pool_alloc(size_t size) {
+    return size == LV_MEM_SIZE ? ui_memory_pool : nullptr;
+}
 
 // =============================================================================
 // VARIABLES GLOBALES — Buffers de dibujo LVGL
@@ -142,6 +148,19 @@ esp_err_t lvgl_port_init(void)
     // 2. INICIALIZAR LVGL
     // =========================================================================
 
+    // FUNCIONAL: mantener el mismo pool TLSF/tamano de LVGL, pero en PSRAM.
+    // Libera 128 KB internos para Wi-Fi/BLE. buf1/buf2 siguen siendo DMA internos.
+    if (!ui_memory_pool)
+        ui_memory_pool = heap_caps_malloc(LV_MEM_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!ui_memory_pool) {
+        NERA_LOGE(TAG, "No se pudo reservar pool LVGL en PSRAM (%u bytes)", (unsigned)LV_MEM_SIZE);
+        heap_caps_free(buf1);
+        heap_caps_free(buf2);
+        buf1 = buf2 = nullptr;
+        return ESP_ERR_NO_MEM;
+    }
+    NERA_LOGI(TAG, "UI MEM V3: pool LVGL %u KB en PSRAM; buffers de dibujo separados",
+              (unsigned)(LV_MEM_SIZE / 1024));
     lv_init();
 
     // =========================================================================

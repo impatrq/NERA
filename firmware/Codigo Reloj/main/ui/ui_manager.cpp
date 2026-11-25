@@ -1,163 +1,164 @@
-/** Navegacion LVGL: carrusel horizontal, accesos con retorno y panel rapido.
- * Las vistas solo declaran destinos. Todas las acciones y actualizaciones
- * se resuelven en la tarea grafica, sin cambiar servicios ni drivers. */
+/** Pantalla principal: presenta snapshots reales sin acceder al bus I2C.
+ * Todos los objetos LVGL se crean y actualizan en la tarea grafica. */
 #include "ui/ui_manager.h"
-#include "ui/screens/watch_screens.h"
-#include "ui/screens/splash_screen.h"
-#include "ui/theme/nera_theme.h"
-#include "power/power_manager.h"
-#include "core/event_bus.h"
-#include "utils/logger.h"
-#include <stdint.h>
+#include "display/display_manager.h"
+#include "sensor_service.h"
+#include "services/time_service.h"
+#include "nera_config.h"
+#include "lvgl.h"
+#include <stdio.h>
+#include <string.h>
 
 namespace {
-constexpr unsigned count = (unsigned)WatchPage::Count;
-constexpr unsigned main_count = (unsigned)WatchPage::Quick;
-WatchView views[count];
-WatchPage current = WatchPage::Home;
-WatchPage trail[8];
-unsigned depth = 0;
-uint32_t last_navigation = 0;
-bool transitioning = true;
-int directions[] = {-1, 1};
+// Posiciones de la vista existente, con ambiente en el espacio del boton demo.
+constexpr uint32_t BACKGROUND = 0x080B12, TEXT = 0xF2F4F8, MUTED = 0x9BA6B7;
+constexpr uint32_t ACCENT = 0x57BDD1, AMBER = 0xE8B766;
+constexpr int MARGIN = 20, CONTENT_WIDTH = NERA_LCD_WIDTH - 2 * MARGIN;
+constexpr int PULSE_Y = 82, OBJECT_Y = 143, MOTION_Y = 204, AMBIENT_Y = 252;
+constexpr uint32_t REFRESH_MS = 250;
 
-void update(lv_timer_t *) {
-    NeraEvent event;
-    for (unsigned i = 0; i < 16 && event_bus_receive(&event, 0) == ESP_OK; ++i) {}
-    power_manager_tick(lv_disp_get_inactive_time(nullptr));
-    NeraHealthSnapshot data = {};
-    if (health_service_get_snapshot(&data) != ESP_OK) return;
-    auto &view = views[(unsigned)current];
-    switch (current) {
-        case WatchPage::Home: watchface_update(view, data); break;
-        case WatchPage::Health: health_screen_update(view, data); break;
-        case WatchPage::Heart: metric_screen_update(view, data, false); break;
-        case WatchPage::Temperature: metric_screen_update(view, data, true); break;
-        case WatchPage::Sleep: sleep_screen_update(view, data); break;
-        case WatchPage::Settings:
-        case WatchPage::Quick: settings_screen_update(view); break;
-        default: break;
+lv_obj_t *pulse_value = nullptr, *object_value = nullptr;
+lv_obj_t *pulse_caption = nullptr;
+lv_obj_t *oxygen_caption = nullptr, *oxygen_value = nullptr;
+lv_obj_t *motion_value = nullptr, *ambient_value = nullptr;
+lv_obj_t *clock_value = nullptr;
+
+lv_obj_t *label(lv_obj_t *parent, const char *text, int y,
+                const lv_font_t *font, uint32_t color) {
+    auto *object = lv_label_create(parent);
+    lv_label_set_text(object, text);
+    lv_obj_set_width(object, CONTENT_WIDTH);
+    lv_obj_set_pos(object, MARGIN, y);
+    lv_obj_set_style_text_font(object, font, 0);
+    lv_obj_set_style_text_color(object, lv_color_hex(color), 0);
+    lv_obj_set_style_text_align(object, LV_TEXT_ALIGN_LEFT, 0);
+    return object;
+}
+
+void render_sensor_snapshot(lv_timer_t *) {
+    char clock_text[6] = "--:--";
+    time_service_local_hhmm(clock_text);
+    if (strcmp(lv_label_get_text(clock_value), clock_text) != 0)
+        lv_label_set_text(clock_value, clock_text);
+    SensorSnapshot sample = {};
+    if (sensor_service_get_snapshot(&sample) != ESP_OK) sample = {};
+    char value[48];
+
+    if (sample.heart_valid || sample.bpm > 0) {
+        // La ultima cifra sigue visible entre detecciones; la leyenda indica
+        // si ya no es una lectura actual. BLE e historial conservan su validez.
+        lv_label_set_text(pulse_caption, sample.heart_valid && !sample.heart_held ?
+                          "Pulso" : "Ultimo pulso");
+        lv_obj_set_style_text_font(pulse_value,&lv_font_montserrat_20,0);
+        lv_obj_set_style_text_color(pulse_value,
+                                    lv_color_hex(sample.heart_valid && !sample.heart_held ?
+                                                 0xE88996 : MUTED), 0);
+        snprintf(value, sizeof(value), "%.0f BPM", sample.bpm);
+        lv_label_set_text(pulse_value, value);
+    } else {
+        lv_label_set_text(pulse_caption,"Pulso");
+        lv_obj_set_style_text_font(pulse_value,&lv_font_montserrat_14,0);
+        lv_obj_set_style_text_color(pulse_value,lv_color_hex(0xE88996),0);
+        const char *state=!sample.max_online ? "MAX sin conexion" :
+            sample.max_saturated ? "Senal saturada" :
+            !sample.max_contact ? "Apoya el dedo" : "Buscando pulso";
+        lv_label_set_text(pulse_value,state);
+    }
+    if (sample.spo2_valid || sample.spo2 > 0) {
+        lv_label_set_text(oxygen_caption, sample.spo2_valid ? "SpO2 est." : "Ult. SpO2");
+        lv_obj_set_style_text_color(oxygen_value,
+                                    lv_color_hex(sample.spo2_valid ? ACCENT : MUTED), 0);
+        snprintf(value, sizeof(value), "%.0f%%", sample.spo2);
+        lv_label_set_text(oxygen_value, value);
+    } else {
+        lv_label_set_text(oxygen_caption, "SpO2 est.");
+        lv_obj_set_style_text_color(oxygen_value, lv_color_hex(ACCENT), 0);
+        lv_label_set_text(oxygen_value, "--");
+    }
+
+    if (sample.mlx_valid) {
+        snprintf(value, sizeof(value), "%.1f °C", sample.object_celsius);
+        lv_label_set_text(object_value, value);
+        snprintf(value, sizeof(value), "%.1f °C", sample.ambient_celsius);
+        lv_label_set_text(ambient_value, value);
+    } else {
+        lv_label_set_text(object_value, "Sin lectura");
+        lv_label_set_text(ambient_value, "Sin lectura");
+    }
+
+    if (sample.mpu_valid) {
+        // Son magnitudes medidas. La aceleracion incluye gravedad; no se
+        // interpreta como un diagnostico ni como una fase de sueno.
+        snprintf(value, sizeof(value), "A %.2fg  G %.0f°/s",
+                 sample.acceleration_g, sample.rotation_dps);
+        lv_point_t extent;
+        lv_txt_get_size(&extent, value, &lv_font_montserrat_20, 0, 0,
+                        LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        lv_obj_set_style_text_font(motion_value,
+            extent.x <= CONTENT_WIDTH ? &lv_font_montserrat_20 : &lv_font_montserrat_14, 0);
+        lv_label_set_text(motion_value, value);
+    } else {
+        lv_obj_set_style_text_font(motion_value, &lv_font_montserrat_20, 0);
+        lv_label_set_text(motion_value, "Sin lectura");
     }
 }
-bool ready() {
-    return !transitioning && lv_scr_act() == views[(unsigned)current].root &&
-           lv_tick_elaps(last_navigation) >= NERA_UI_TRANSITION_MS;
-}
-void loaded(lv_event_t *) { transitioning = false; }
-// El historial solo cambia una vez aceptada la accion. No guarda eventos en vuelo.
-void open(WatchPage target, lv_scr_load_anim_t animation, bool remember) {
-    if (!ready() || target == current || target >= WatchPage::Count) return;
-    if (remember) {
-        if (depth == 8) {
-            for (unsigned i = 1; i < depth; ++i) trail[i - 1] = trail[i];
-            --depth;
-        }
-        trail[depth++] = current;
-    }
-    current = target;
-    transitioning = true;
-    last_navigation = lv_tick_get();
-    update(nullptr);
-    lv_scr_load_anim(views[(unsigned)current].root, animation, NERA_UI_TRANSITION_MS, 0, false);
-}
-void back(lv_event_t *) {
-    if (!ready()) return;
-    if (current == WatchPage::Home) {
-        open(WatchPage::Quick, LV_SCR_LOAD_ANIM_MOVE_BOTTOM, true);
-        return;
-    }
-    const WatchPage target = depth ? trail[--depth] : WatchPage::Home;
-    open(target, LV_SCR_LOAD_ANIM_MOVE_RIGHT, false);
-}
-void navigate(int direction) {
-    if (!ready() || current == WatchPage::Quick) return;
-    const unsigned next = ((unsigned)current + main_count + direction) % main_count;
-    depth = 0; // Deslizar recorre paginas principales; Volver queda apuntando al inicio.
-    open((WatchPage)next, direction > 0 ? LV_SCR_LOAD_ANIM_MOVE_LEFT : LV_SCR_LOAD_ANIM_MOVE_RIGHT, false);
-}
-void arrow(lv_event_t *event) { navigate(*static_cast<int *>(lv_event_get_user_data(event))); }
-void shortcut(lv_event_t *event) {
-    open((WatchPage)(uintptr_t)lv_event_get_user_data(event), LV_SCR_LOAD_ANIM_MOVE_LEFT, true);
-}
-void gesture(lv_event_t *) {
-    auto *input = lv_indev_get_act();
-    if (!input || !ready()) return;
-    const lv_dir_t direction = lv_indev_get_gesture_dir(input);
-    if (direction == LV_DIR_NONE) return;
-    // Impide que el mismo deslizamiento termine activando la metrica bajo el dedo.
-    lv_indev_wait_release(input);
-    if (direction == LV_DIR_LEFT || direction == LV_DIR_RIGHT)
-        navigate(direction == LV_DIR_LEFT ? 1 : -1);
-    else if (direction == LV_DIR_BOTTOM)
-        open(WatchPage::Quick, LV_SCR_LOAD_ANIM_MOVE_BOTTOM, true);
-    else if (direction == LV_DIR_TOP) {
-        if (current == WatchPage::Quick) back(nullptr);
-        else open(WatchPage::Health, LV_SCR_LOAD_ANIM_MOVE_TOP, true);
-    }
-}
-lv_obj_t *footer_button(lv_obj_t *root, int x, int y, int width, const char *symbol,
-                        lv_event_cb_t callback, void *data) {
-    using namespace nera_theme;
-    auto *button = panel(root, x, y, width, 44);
-    lv_obj_set_style_bg_color(button, lv_color_hex(bg), 0);
-    touch_feedback(button);
-    lv_obj_add_event_cb(button, callback, LV_EVENT_SHORT_CLICKED, data);
-    auto *icon = label(button, 0, 0, width, &lv_font_montserrat_14, text, symbol);
-    lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(icon);
-    return button;
-}
-void footer(lv_obj_t *root, unsigned page, int w, int h) {
-    using namespace nera_theme;
-    if (page < main_count) {
-        footer_button(root, 4, h - 44, 44, LV_SYMBOL_LEFT, arrow, &directions[0]);
-        footer_button(root, w - 48, h - 44, 44, LV_SYMBOL_RIGHT, arrow, &directions[1]);
-        for (unsigned i = 0; i < main_count; ++i) {
-            auto *dot = panel(root, (w - 66) / 2 + i * 12, h - 51, 6, 4);
-            lv_obj_set_style_bg_color(dot, lv_color_hex(i == page ? accent : line), 0);
-            lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-        }
-    }
-    footer_button(root, (w - 80) / 2, h - 44, 80,
-                  page == 0 ? LV_SYMBOL_SETTINGS : "Volver", back, nullptr);
+
+void on_brightness(lv_event_t *event) {
+    const auto value = lv_slider_get_value(lv_event_get_target(event));
+    display_manager_set_brightness((uint8_t)value);
 }
 }
-void watch_navigate_on_tap(lv_obj_t *target, WatchPage page) {
-    nera_theme::touch_feedback(target);
-    lv_obj_add_event_cb(target, shortcut, LV_EVENT_SHORT_CLICKED, (void *)(uintptr_t)page);
-}
+
 esp_err_t ui_manager_init(void) {
-    const int w = lv_disp_get_hor_res(nullptr), h = lv_disp_get_ver_res(nullptr);
-    if (w < 240 || h < 320) return ESP_ERR_NOT_SUPPORTED;
-    const char *titles[] = {"", "Salud", "Pulso", "Temperatura", "Sueno", "Ajustes", "Panel rapido"};
-    for (unsigned i = 0; i < count; ++i) {
-        auto *root = lv_obj_create(nullptr);
-        views[i].root = root;
-        lv_obj_remove_style_all(root);
-        lv_obj_set_size(root, w, h);
-        lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_set_style_bg_color(root, lv_color_hex(nera_theme::bg), 0);
-        lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
-        lv_obj_add_event_cb(root, gesture, LV_EVENT_GESTURE, nullptr);
-        lv_obj_add_event_cb(root, loaded, LV_EVENT_SCREEN_LOADED, nullptr);
-        if (i) nera_theme::label(root, 16, 16, w - 32, &lv_font_montserrat_20, nera_theme::text, titles[i]);
-        footer(root, i, w, h);
-    }
-    watchface_create(views[0]);
-    health_screen_create(views[1]);
-    metric_screen_create(views[2], false);
-    metric_screen_create(views[3], true);
-    sleep_screen_create(views[4]);
-    settings_screen_create(views[5]);
-    settings_screen_create(views[6], true);
-    update(nullptr);
-    if (splash_screen_show(views[0].root) != ESP_OK) {
-        lv_scr_load(views[0].root);
-        transitioning = false;
-    }
-    if (!lv_timer_create(update, 500, nullptr)) return ESP_ERR_NO_MEM;
-    lv_mem_monitor_t memory;
-    lv_mem_monitor(&memory);
-    NERA_LOGI(NERA_TAG_LVGL, "NERA UI: 6 paginas + panel rapido; heap libre %u", (unsigned)memory.free_size);
+    auto *screen = lv_obj_create(nullptr);
+    lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(BACKGROUND), 0);
+    lv_obj_set_style_pad_all(screen, 0, 0);
+
+    auto *title = label(screen, "NERA", 18, &lv_font_montserrat_28, TEXT);
+    lv_obj_set_width(title, 100);
+    clock_value = label(screen, "--:--", 21, &lv_font_montserrat_20, AMBER);
+    lv_obj_set_pos(clock_value, 135, 21);
+    lv_obj_set_width(clock_value, 85);
+    lv_obj_set_style_text_align(clock_value, LV_TEXT_ALIGN_RIGHT, 0);
+    label(screen, "Lecturas de sensores", 56, LV_FONT_DEFAULT, MUTED);
+
+    pulse_caption=label(screen, "Pulso", PULSE_Y, LV_FONT_DEFAULT, MUTED);
+    lv_obj_set_width(pulse_caption, 112);
+    pulse_value = label(screen, "Sin lectura", PULSE_Y + 18, &lv_font_montserrat_20, 0xE88996);
+    lv_obj_set_width(pulse_value, 112);
+    lv_label_set_long_mode(pulse_value, LV_LABEL_LONG_CLIP);
+    oxygen_caption = label(screen, "SpO2 est.", PULSE_Y, LV_FONT_DEFAULT, MUTED);
+    lv_obj_set_pos(oxygen_caption, 139, PULSE_Y);
+    lv_obj_set_width(oxygen_caption, 81);
+    oxygen_value = label(screen, "--", PULSE_Y + 18, &lv_font_montserrat_28, ACCENT);
+    lv_obj_set_pos(oxygen_value, 139, PULSE_Y + 18);
+    lv_obj_set_width(oxygen_value, 81);
+
+    label(screen, "Objeto IR sin contacto", OBJECT_Y, LV_FONT_DEFAULT, MUTED);
+    object_value = label(screen, "Sin lectura", OBJECT_Y + 18, &lv_font_montserrat_28, AMBER);
+
+    // Un rotulo corto evita el salto de linea que se superponia al dato.
+    label(screen, "Movimiento", MOTION_Y, LV_FONT_DEFAULT, MUTED);
+    motion_value = label(screen, "Sin lectura", MOTION_Y + 20, &lv_font_montserrat_20, ACCENT);
+    lv_label_set_long_mode(motion_value, LV_LABEL_LONG_CLIP);
+    lv_obj_set_height(motion_value, 26);
+
+    label(screen, "Temperatura ambiente", AMBIENT_Y, LV_FONT_DEFAULT, MUTED);
+    ambient_value = label(screen, "Sin lectura", AMBIENT_Y + 17, &lv_font_montserrat_20, AMBER);
+
+    auto *brightness_label = label(screen, "Brillo", 297, LV_FONT_DEFAULT, MUTED);
+    lv_obj_set_width(brightness_label, 50);
+    auto *slider = lv_slider_create(screen);
+    lv_obj_set_pos(slider, 90, 303);
+    lv_obj_set_size(slider, 125, 6);
+    lv_slider_set_range(slider, NERA_BL_MIN, NERA_BL_MAX);
+    lv_slider_set_value(slider, display_manager_get_brightness(), LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(ACCENT), LV_PART_INDICATOR);
+    lv_obj_add_event_cb(slider, on_brightness, LV_EVENT_VALUE_CHANGED, nullptr);
+
+    render_sensor_snapshot(nullptr);
+    lv_timer_create(render_sensor_snapshot, REFRESH_MS, nullptr);
+    lv_scr_load(screen);
     return ESP_OK;
 }

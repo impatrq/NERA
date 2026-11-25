@@ -22,7 +22,7 @@ extern "C" {
  *
  * Configura:
  * - Timer LEDC a 5 kHz (resolución de 8 bits: 0 a 255).
- * - Canal LEDC conectado al GPIO 46 de la pantalla Waveshare.
+ * - Canal LEDC conectado al GPIO 1 de la pantalla Waveshare.
  * - Enciende la pantalla con el brillo por defecto (80%).
  *
  * @return ESP_OK si la configuración fue correcta.
@@ -38,11 +38,14 @@ esp_err_t display_manager_init(void);
 esp_err_t display_manager_set_brightness(uint8_t brightness);
 
 /**
- * @brief Obtiene el nivel de brillo actual.
+ * @brief Obtiene el brillo elegido, incluso si la pantalla esta apagada.
  *
  * @return Nivel de brillo actual (0 - 255).
  */
 uint8_t display_manager_get_brightness(void);
+
+/** Apaga o restaura solo la retroiluminacion; no detiene las mediciones. */
+esp_err_t display_manager_set_screen_awake(bool awake);
 
 /**
  * @brief Transición gradual de brillo (fade suave).

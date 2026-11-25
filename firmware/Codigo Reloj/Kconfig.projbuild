@@ -19,9 +19,17 @@
 
 menu "NERA Smartwatch — Configuración del Proyecto"
 
+    config NERA_ESPNOW_DIAGNOSTIC
+        bool "Enviar baliza ESP-NOW de diagnóstico (sin alertas)"
+        default n
+        help
+            Envía únicamente una baliza de prueba a la vincha por el canal 1.
+            No transmite métricas de salud ni activa salidas. Mantener
+            desactivado durante el uso normal hasta probar coexistencia BLE/Wi-Fi.
+
     config NERA_USE_MOCK_SENSORS
         bool "Usar sensores simulados (mock sensors)"
-        default y
+        default n
         help
             Cuando está habilitado, NERA usa datos simulados en lugar de
             leer de sensores de hardware reales.
@@ -46,12 +54,12 @@ menu "NERA Smartwatch — Configuración del Proyecto"
 
     config NERA_SCREEN_TIMEOUT_MS
         int "Tiempo de apagado de pantalla (ms)"
-        default 30000
+        default 60000
         range 5000 300000
         help
-            Tiempo en milisegundos sin interacción antes de que la pantalla
-            se atenúe y eventualmente se apague.
-            Valor por defecto: 30000 ms = 30 segundos.
+            Tiempo en milisegundos sin tocar la pantalla antes de apagar
+            la retroiluminacion. Las mediciones continuan activas.
+            Valor por defecto: 60000 ms = 1 minuto.
 
     config NERA_DIM_BRIGHTNESS
         int "Brillo en modo atenuado (0-255)"
