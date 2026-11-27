@@ -1,5 +1,11 @@
 # Preparación de bobinas de la vincha
 
+Actualización 26/11/2026: GPIO5 queda condicionado a una alerta recibida por la
+app, con confirmación C3 y apagado por pérdida de enlace. Ver
+[flujo actual](ALERTAS_LAB.md). Esto integra la señal de control; siguen
+pendientes las mediciones eléctricas y la validación de las bobinas indicadas
+en este documento. El filtro MAC sigue siendo solo para laboratorio.
+
 Actualización 18/11/2026: `Codigo Vincha` vuelve a generar GPIO5 de 15 Hz,
 activo bajo ~2,5 ms, exclusivamente SIN bobinas, tras la prueba temporal fija
 y la reducción del tiempo activo a la mitad solicitada por el usuario.
