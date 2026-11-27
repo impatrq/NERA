@@ -7,6 +7,7 @@ idf_component_register(
     SRCS
         ${NERA_RADIO_SOURCES}
         "connectivity/ble_manager.cpp"
+        "connectivity/alert_delivery.cpp"
         "connectivity/user_alert_preferences.cpp"
         "services/time_service.cpp"
         "services/history_service.cpp"
