@@ -1,51 +1,70 @@
-N.E.R.A.
-Neuro Estimulación y Relajación Asistida
+# N.E.R.A.
+
+**Neuro Estimulación y Relajación Asistida**
+
 <p align="center">
   <img src="docs/manual%20de%20usuario/logo-nera.png.png" alt="Logo de NERA" width="155">
 </p>
-Somos estudiantes de 7.º año de Aviónica de la Escuela de Educación Secundaria Técnica N.º 7 «Taller Regional Quilmes» (IMPA). Durante 2026 desarrollamos NERA, un proyecto que combina investigación, electrónica, programación y diseño 3D.
+
+Somos estudiantes de 7.º año de Aviónica de la **Escuela de Educación Secundaria Técnica N.º 7 «Taller Regional Quilmes» (IMPA)**. Durante 2026 desarrollamos NERA, un proyecto que combina investigación, electrónica, programación y diseño 3D.
+
 <p align="center">
   <img src="docs/readme/docs/equipo_nera_exposicion.jpg" alt="Los cuatro integrantes del proyecto NERA durante la exposición" width="650">
 </p>
-Repositorio oficial · Seguimiento en Trello
-¿Qué es NERA?
-NERA surgió con la idea de desarrollar una herramienta tecnológica que pueda acompañar a personas en situaciones de estrés o ansiedad. Construimos un prototipo portátil con dos dispositivos principales: un reloj y una vincha. Una aplicación móvil complementa el sistema y permite consultar las mediciones.
 
-También investigamos los campos electromagnéticos pulsados (PEMF) de baja frecuencia y sus posibles aplicaciones. Esta parte sigue siendo experimental: todavía no demostramos efectos terapéuticos ni validamos la seguridad del dispositivo para su aplicación sobre personas.
-¿Cómo funciona?
-El reloj utiliza un ESP32-S3 para recopilar información de los sensores, procesarla y mostrarla en su pantalla táctil. Mediante Bluetooth Low Energy (BLE) envía lecturas a la aplicación móvil, donde se pueden consultar datos, historial y preferencias.
+[Repositorio oficial](https://github.com/impatrq/NERA) · [Seguimiento en Trello](https://trello.com/b/I9nTunkC/kanban-2026722cnera)
 
-El reloj también se comunica con la vincha, controlada por un ESP32-C3, mediante ESP-NOW. Probamos el intercambio de mensajes, alertas de laboratorio y confirmaciones de recepción. La vincha contiene bobinas y una electrónica de control; el accionamiento seguro y automático de las bobinas a partir de las mediciones todavía requiere validación eléctrica.
-Prototipos reales
+## ¿Qué es NERA?
+
+NERA surgió con la idea de desarrollar una herramienta tecnológica que pueda acompañar a personas en situaciones de estrés o ansiedad. Construimos un prototipo portátil con **dos dispositivos principales: un reloj y una vincha**. Una aplicación móvil complementa el sistema y permite consultar las mediciones.
+
+También investigamos los campos electromagnéticos pulsados (**PEMF**) de baja frecuencia y sus posibles aplicaciones. Esta parte sigue siendo experimental: todavía no demostramos efectos terapéuticos ni validamos la seguridad del dispositivo para su aplicación sobre personas.
+
+## ¿Cómo funciona?
+
+El **reloj** utiliza un ESP32-S3 para recopilar información de los sensores, procesarla y mostrarla en su pantalla táctil. Mediante **Bluetooth Low Energy (BLE)** envía lecturas a la aplicación móvil, donde se pueden consultar datos, historial y preferencias.
+
+El reloj también se comunica con la **vincha**, controlada por un ESP32-C3, mediante **ESP-NOW**. Probamos el intercambio de mensajes, alertas de laboratorio y confirmaciones de recepción. La vincha contiene bobinas y una electrónica de control; el accionamiento seguro y automático de las bobinas a partir de las mediciones todavía requiere validación eléctrica.
+
+## Prototipos reales
+
 Estas son las versiones físicas del reloj y la vincha que construimos, ajustamos y presentamos durante el desarrollo del proyecto.
-Reloj NERA	Vincha NERA
-<img src="docs/readme/docs/reloj_prototipo_muneca.jpg" alt="Reloj NERA colocado en la muñeca" height="235">	<img src="docs/readme/docs/vincha_prototipo_real.jpg" alt="Vincha NERA colocada en la cabeza" height="235">
-Reloj con carcasa impresa en 3D	Vincha con las carcasas de las bobinas
 
+| Reloj NERA | Vincha NERA |
+|:---:|:---:|
+| <img src="docs/readme/docs/reloj_prototipo_muneca.jpg" alt="Reloj NERA colocado en la muñeca" height="215"> | <img src="docs/readme/docs/vincha_prototipo_real.jpg" alt="Vincha NERA colocada en la cabeza" height="215"> |
+| **Reloj con carcasa impresa en 3D** | **Vincha con las carcasas de las bobinas** |
 
-Modelos actuales en CAD
+## Modelos actuales en CAD
+
 Estos son algunos de los diseños actuales de la estructura del reloj y de la vincha hechos para adaptar el prototipo a los componentes reales.
-Modelo del reloj	Modelo de la vincha
-<img src="docs/readme/docs/reloj_autocad_actual.png" alt="Modelo CAD actual de la carcasa del reloj" height="185">	<img src="docs/readme/docs/vincha_autocad_actual.png" alt="Modelo CAD actual de la estructura de la vincha" height="185">
-Carcasa del reloj	Soporte de la vincha y bobina
 
+| Modelo del reloj | Modelo de la vincha |
+|:---:|:---:|
+| <img src="docs/readme/docs/reloj_autocad_actual.png" alt="Modelo CAD actual de la carcasa del reloj" height="190"> | <img src="docs/readme/docs/vincha_autocad_actual.png" alt="Modelo CAD actual de la estructura de la vincha" height="190"> |
+| **Carcasa del reloj** | **Soporte de la vincha y bobina** |
 
-PCB y proceso electrónico
+## PCB y proceso electrónico
+
 Durante el proyecto diseñamos placas, corregimos pistas, soldamos componentes y probamos módulos reales para verificar conexiones y funcionamiento.
-Diseño PCB	Placa en pruebas
-<img src="docs/readme/docs/pcb_kicad_diseno_1.png" alt="Diseño de PCB en KiCad" height="185">	<img src="docs/readme/docs/placa_sensores_real.jpg" alt="Placa de sensores real en pruebas" height="185">
-Diseño de la PCB	Placa de sensores armada
 
+| Diseño PCB | Placa en pruebas |
+|:---:|:---:|
+| <img src="docs/readme/docs/pcb_kicad_diseno_1.png" alt="Diseño de PCB en KiCad" height="190"> | <img src="docs/readme/docs/placa_sensores_real.jpg" alt="Placa de sensores real en pruebas" height="190"> |
+| **Diseño de la PCB** | **Placa de sensores armada** |
 
-Componentes del sistema
-Reloj inteligente
-El reloj utiliza un ESP32-S3 con pantalla táctil de 240 × 320 píxeles. El firmware se desarrolló con C/C++, ESP-IDF, FreeRTOS y LVGL.
-Componente	Función
-ESP32-S3	Procesamiento, pantalla y comunicaciones inalámbricas.
-MAX30102	Señal óptica para estimar frecuencia cardíaca y SpO₂.
-MLX90614	Medición infrarroja de temperatura de objeto.
-MPU6050	Registro de movimiento mediante acelerómetro y giroscopio.
+## Componentes del sistema
 
+### Reloj inteligente
+
+El reloj utiliza un **ESP32-S3** con pantalla táctil de **240 × 320 píxeles**. El firmware se desarrolló con **C/C++, ESP-IDF, FreeRTOS y LVGL**.
+
+| Componente | Función |
+| --- | --- |
+| **ESP32-S3** | Procesamiento, pantalla y comunicaciones inalámbricas. |
+| **MAX30102** | Señal óptica para estimar frecuencia cardíaca y SpO₂. |
+| **MLX90614** | Medición infrarroja de temperatura de objeto. |
+| **MPU6050** | Registro de movimiento mediante acelerómetro y giroscopio. |
 
 Las estimaciones de pulso y SpO₂ dependen de lecturas válidas. La temperatura infrarroja registrada no representa directamente la temperatura corporal central.
 
