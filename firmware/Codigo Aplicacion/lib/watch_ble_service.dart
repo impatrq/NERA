@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'user_preferences.dart';
 import 'watch_time_protocol.dart';
 import 'watch_history.dart';
+import 'watch_alert.dart';
 
 // CAMBIAR: nombre con el que se anuncia tu reloj por Bluetooth.
 const String neraWatchName = 'NERA Watch';
@@ -28,8 +29,11 @@ bool isNeraAdvertisement({
   required String advertisedName,
   required String platformName,
   required Iterable<String> serviceUuids,
-}) => [advertisedName, platformName].any((name) =>
-        name.trim().toLowerCase() == neraWatchName.toLowerCase()) ||
+}) =>
+    [
+      advertisedName,
+      platformName,
+    ].any((name) => name.trim().toLowerCase() == neraWatchName.toLowerCase()) ||
     serviceUuids.any((uuid) => uuid.toLowerCase() == neraServiceUuid);
 
 // Cada notificación contiene una métrica: {"temp":36.6} o {"hr":76}.
@@ -77,11 +81,14 @@ class WatchReading {
     if (data.keys.any((key) => !allowed.contains(key)) || data.isEmpty) {
       throw const FormatException('Campos BLE desconocidos o vacíos');
     }
-    final hasMotion = data.containsKey('ax') || data.containsKey('ay') ||
+    final hasMotion =
+        data.containsKey('ax') ||
+        data.containsKey('ay') ||
         data.containsKey('az');
     if (hasMotion &&
-        !(data.containsKey('ax') && data.containsKey('ay') &&
-          data.containsKey('az'))) {
+        !(data.containsKey('ax') &&
+            data.containsKey('ay') &&
+            data.containsKey('az'))) {
       throw const FormatException('Los tres ejes deben viajar juntos');
     }
     for (final entry in data.entries) {
@@ -104,9 +111,13 @@ class WatchReading {
       hasMotion: hasMotion,
       receivedAt: receivedAt ?? DateTime.now(),
     );
-    if ((reading.hasHeartRate && data['hr'] != null && reading.heartRate == null) ||
+    if ((reading.hasHeartRate &&
+            data['hr'] != null &&
+            reading.heartRate == null) ||
         (reading.hasSpo2 && data['spo2'] != null && reading.spo2 == null) ||
-        (reading.hasTemperature && data['temp'] != null && reading.temperature == null) ||
+        (reading.hasTemperature &&
+            data['temp'] != null &&
+            reading.temperature == null) ||
         (reading.hasMotion && data['ax'] != null && reading.movement == null)) {
       throw const FormatException('Métrica BLE fuera de rango');
     }
@@ -137,6 +148,51 @@ enum WatchConnectionState {
 }
 
 class WatchBleService {
+  final _alertsController = StreamController<WatchAlert>.broadcast(sync: true);
+  Stream<WatchAlert> get alerts => _alertsController.stream;
+  BluetoothCharacteristic? _alertCharacteristic;
+  StreamSubscription<List<int>>? _alertSubscription;
+  Timer? _alertTimer;
+  bool _alertWriteBusy = false;
+  bool _foreground = true;
+  final Map<int, (WatchAlert, DateTime)> _currentAlerts = {};
+
+  void setForeground(bool foreground) {
+    _foreground = foreground;
+    if (!foreground) _currentAlerts.clear();
+  }
+
+  // Solo confirma eventos entregados al controlador visible de la aplicacion.
+  Future<void> _renewAlerts() async {
+    final characteristic = _alertCharacteristic;
+    if (characteristic == null ||
+        !_foreground ||
+        _alertWriteBusy ||
+        !_alertsController.hasListener) {
+      return;
+    }
+    _alertWriteBusy = true;
+    try {
+      await characteristic
+          .write(WatchAlert.phoneReady(), withoutResponse: false)
+          .timeout(const Duration(seconds: 2));
+      for (final item in List.of(_currentAlerts.values)) {
+        if (_alertCharacteristic != characteristic || !_foreground) break;
+        if (DateTime.now().difference(item.$2) > const Duration(seconds: 2) ||
+            item.$1.phase == AlertDeliveryPhase.failed) {
+          continue;
+        }
+        await characteristic
+            .write(item.$1.receipt(), withoutResponse: false)
+            .timeout(const Duration(seconds: 2));
+      }
+    } catch (_) {
+      // No renovar ante errores: reloj y C3 vencen sus permisos automaticamente.
+    } finally {
+      _alertWriteBusy = false;
+    }
+  }
+
   final StreamController<WatchReading> _readingsController =
       StreamController<WatchReading>.broadcast();
   final StreamController<WatchConnectionState> _stateController =
@@ -176,9 +232,11 @@ class WatchBleService {
         // Conservamos el error original para mostrarlo en la app.
       }
       _stateController.add(WatchConnectionState.failed);
-      _messageController.add(error is TimeoutException
-          ? 'La búsqueda Bluetooth tardó demasiado. Reiniciá Bluetooth e intentá otra vez.'
-          : 'Error BLE al buscar: $error');
+      _messageController.add(
+        error is TimeoutException
+            ? 'La búsqueda Bluetooth tardó demasiado. Reiniciá Bluetooth e intentá otra vez.'
+            : 'Error BLE al buscar: $error',
+      );
     }
   }
 
@@ -186,8 +244,9 @@ class WatchBleService {
     _stateController.add(WatchConnectionState.scanning);
     _messageController.add('Buscando $neraWatchName...');
 
-    final allowed = await _requestPermissions()
-        .timeout(const Duration(seconds: 30));
+    final allowed = await _requestPermissions().timeout(
+      const Duration(seconds: 30),
+    );
     if (!allowed) {
       _stateController.add(WatchConnectionState.failed);
       _messageController.add('Faltan permisos de Bluetooth.');
@@ -200,7 +259,9 @@ class WatchBleService {
         .timeout(const Duration(seconds: 5));
     if (adapter != BluetoothAdapterState.on) {
       _stateController.add(WatchConnectionState.failed);
-      _messageController.add('Activá Bluetooth en el teléfono y volvé a conectar.');
+      _messageController.add(
+        'Activá Bluetooth en el teléfono y volvé a conectar.',
+      );
       return;
     }
     _stateController.add(WatchConnectionState.scanning);
@@ -208,29 +269,35 @@ class WatchBleService {
     final completer = Completer<BluetoothDevice?>();
     final seenDevices = <String>{};
     Object? scanError;
-    _scanSubscription = FlutterBluePlus.onScanResults.listen((results) {
-      for (final result in results) {
-        seenDevices.add(result.device.remoteId.toString());
-        // FUNCIONAL: revisar ambos nombres. Android puede conservar un nombre
-        // anterior; el servicio GATT se verifica siempre después de conectar.
-        final matches = isNeraAdvertisement(
-          advertisedName: result.advertisementData.advName,
-          platformName: result.device.platformName,
-          serviceUuids: result.advertisementData.serviceUuids.map((uuid) => uuid.toString()),
-        );
-        if (matches && !completer.isCompleted) {
-          completer.complete(result.device);
-          break;
+    _scanSubscription = FlutterBluePlus.onScanResults.listen(
+      (results) {
+        for (final result in results) {
+          seenDevices.add(result.device.remoteId.toString());
+          // FUNCIONAL: revisar ambos nombres. Android puede conservar un nombre
+          // anterior; el servicio GATT se verifica siempre después de conectar.
+          final matches = isNeraAdvertisement(
+            advertisedName: result.advertisementData.advName,
+            platformName: result.device.platformName,
+            serviceUuids: result.advertisementData.serviceUuids.map(
+              (uuid) => uuid.toString(),
+            ),
+          );
+          if (matches && !completer.isCompleted) {
+            completer.complete(result.device);
+            break;
+          }
         }
-      }
-    }, onError: (Object error) {
-      scanError = error;
-      if (!completer.isCompleted) completer.complete(null);
-    });
+      },
+      onError: (Object error) {
+        scanError = error;
+        if (!completer.isCompleted) completer.complete(null);
+      },
+    );
 
     // FUNCIONAL: Android 12+ permite BLE sin ubicación (neverForLocation en
     // AndroidManifest.xml). En Android 11 o anterior sigue siendo necesaria.
-    final legacyAndroid = defaultTargetPlatform == TargetPlatform.android &&
+    final legacyAndroid =
+        defaultTargetPlatform == TargetPlatform.android &&
         (_androidSdk ?? 0) < 31;
     await FlutterBluePlus.startScan(
       timeout: const Duration(seconds: 12),
@@ -238,8 +305,7 @@ class WatchBleService {
       continuousUpdates: true,
       androidUsesFineLocation: legacyAndroid,
       androidCheckLocationServices: legacyAndroid,
-    )
-        .timeout(const Duration(seconds: 15));
+    ).timeout(const Duration(seconds: 15));
     final device = await completer.future.timeout(
       const Duration(seconds: 13),
       onTimeout: () => null,
@@ -254,9 +320,9 @@ class WatchBleService {
       _messageController.add(
         seenDevices.isEmpty
             ? 'No se detectó ningún dispositivo BLE. Revisá el permiso de '
-              'Dispositivos cercanos; en Android 11 o anterior, activá Ubicación.'
+                  'Dispositivos cercanos; en Android 11 o anterior, activá Ubicación.'
             : 'Se detectaron ${seenDevices.length} dispositivos BLE, pero no '
-              '$neraWatchName. Reiniciá el reloj y cerrá otras apps que lo usen.',
+                  '$neraWatchName. Reiniciá el reloj y cerrá otras apps que lo usen.',
       );
       return;
     }
@@ -277,6 +343,9 @@ class WatchBleService {
 
     _connectionSubscription = device.connectionState.listen((state) {
       if (state == BluetoothConnectionState.disconnected) {
+        _alertTimer?.cancel();
+        _alertCharacteristic = null;
+        _currentAlerts.clear();
         _stateController.add(WatchConnectionState.disconnected);
         _messageController.add('Reloj desconectado.');
       }
@@ -302,14 +371,38 @@ class WatchBleService {
     final dataCharacteristic = targetService.characteristics.where((item) {
       return item.uuid.toString().toLowerCase() == neraDataCharacteristicUuid;
     }).firstOrNull;
-    _configCharacteristic = targetService.characteristics.where((item) =>
-        item.uuid.toString().toLowerCase() == neraConfigCharacteristicUuid).firstOrNull;
-    _timeCharacteristic = targetService.characteristics.where((item) =>
-        item.uuid.toString().toLowerCase() == neraTimeCharacteristicUuid).firstOrNull;
-    _historyCharacteristic = targetService.characteristics.where((item) =>
-        item.uuid.toString().toLowerCase() == neraHistoryCharacteristicUuid).firstOrNull;
-    _historyControlCharacteristic = targetService.characteristics.where((item) =>
-        item.uuid.toString().toLowerCase() == neraHistoryControlUuid).firstOrNull;
+    _configCharacteristic = targetService.characteristics
+        .where(
+          (item) =>
+              item.uuid.toString().toLowerCase() ==
+              neraConfigCharacteristicUuid,
+        )
+        .firstOrNull;
+    _timeCharacteristic = targetService.characteristics
+        .where(
+          (item) =>
+              item.uuid.toString().toLowerCase() == neraTimeCharacteristicUuid,
+        )
+        .firstOrNull;
+    _historyCharacteristic = targetService.characteristics
+        .where(
+          (item) =>
+              item.uuid.toString().toLowerCase() ==
+              neraHistoryCharacteristicUuid,
+        )
+        .firstOrNull;
+    _historyControlCharacteristic = targetService.characteristics
+        .where(
+          (item) =>
+              item.uuid.toString().toLowerCase() == neraHistoryControlUuid,
+        )
+        .firstOrNull;
+    _alertCharacteristic = targetService.characteristics
+        .where(
+          (item) =>
+              item.uuid.toString().toLowerCase() == neraAlertCharacteristicUuid,
+        )
+        .firstOrNull;
 
     if (dataCharacteristic == null) {
       throw Exception('El reloj no tiene la caracteristica de datos esperada.');
@@ -324,6 +417,30 @@ class WatchBleService {
       }
     });
     await dataCharacteristic.setNotifyValue(true);
+    final alert = _alertCharacteristic;
+    if (alert != null) {
+      _alertSubscription = alert.onValueReceived.listen((bytes) {
+        if (!_foreground || !_alertsController.hasListener) return;
+        try {
+          final event = WatchAlert.decode(bytes);
+          final previous = _currentAlerts[event.metric]?.$1;
+          _alertsController.add(event);
+          _currentAlerts[event.metric] = (event, DateTime.now());
+          if (previous?.key != event.key) unawaited(_renewAlerts());
+        } on FormatException {
+          _messageController.add('Alerta BLE inválida; no se confirmó.');
+        }
+      });
+      await alert.setNotifyValue(true);
+      _alertTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        unawaited(_renewAlerts());
+      });
+      await _renewAlerts();
+    } else {
+      _messageController.add(
+        'Actualizá el firmware del reloj para habilitar alertas a la vincha.',
+      );
+    }
     var timeStatus = 'Hora sin sincronizar.';
     if (_timeCharacteristic != null) {
       try {
@@ -334,17 +451,23 @@ class WatchBleService {
       }
     }
     _stateController.add(WatchConnectionState.connected);
-    _messageController.add('Reloj conectado. $timeStatus Esperando lecturas reales.');
+    _messageController.add(
+      'Reloj conectado. $timeStatus Esperando lecturas reales.',
+    );
   }
 
   Future<void> syncTime() async {
     final characteristic = _timeCharacteristic;
-    if (characteristic == null) throw StateError('Reloj sin característica de hora.');
+    if (characteristic == null) {
+      throw StateError('Reloj sin característica de hora.');
+    }
     final sent = WatchTimePacket.fromPhone(DateTime.now());
-    await characteristic.write(sent.encode(), withoutResponse: false)
+    await characteristic
+        .write(sent.encode(), withoutResponse: false)
         .timeout(const Duration(seconds: 5));
     final response = WatchTimePacket.decode(
-        await characteristic.read().timeout(const Duration(seconds: 5)));
+      await characteristic.read().timeout(const Duration(seconds: 5)),
+    );
     final now = WatchTimePacket.fromPhone(DateTime.now());
     if (response.utcOffsetMinutes != sent.utcOffsetMinutes ||
         (response.epochSeconds - now.epochSeconds).abs() > 3) {
@@ -352,39 +475,54 @@ class WatchBleService {
     }
   }
 
-  Future<int> requestHistory({required int knownGeneration,
-      required int lastSequence}) async {
+  Future<int> requestHistory({
+    required int knownGeneration,
+    required int lastSequence,
+  }) async {
     final history = _historyCharacteristic;
     final control = _historyControlCharacteristic;
     if (history == null || control == null) {
       throw StateError('El reloj no ofrece historial sincronizable.');
     }
     final status = await control.read().timeout(const Duration(seconds: 5));
-    if (status.length != 8) throw const FormatException('Estado de historial inválido');
+    if (status.length != 8) {
+      throw const FormatException('Estado de historial inválido');
+    }
     final bytes = ByteData.sublistView(Uint8List.fromList(status));
     final latest = bytes.getUint32(0, Endian.little);
     final generation = bytes.getUint32(4, Endian.little);
-    if (generation == 0) throw const FormatException('Generación de historial inválida');
+    if (generation == 0) {
+      throw const FormatException('Generación de historial inválida');
+    }
     _historyGeneration = generation;
     await _historySubscription?.cancel();
     _historySubscription = history.onValueReceived.listen((value) {
       try {
         _historyController.add(
-            WatchHistoryEntry.fromBytes(value, _historyGeneration));
+          WatchHistoryEntry.fromBytes(value, _historyGeneration),
+        );
       } catch (_) {
         _messageController.add('Registro de historial inválido; se ignoró.');
       }
     });
     await history.setNotifyValue(true);
     final cursor = knownGeneration == generation && lastSequence <= latest
-        ? lastSequence : 0;
+        ? lastSequence
+        : 0;
     final request = ByteData(4)..setUint32(0, cursor, Endian.little);
-    await control.write(request.buffer.asUint8List(), withoutResponse: false)
+    await control
+        .write(request.buffer.asUint8List(), withoutResponse: false)
         .timeout(const Duration(seconds: 5));
     return generation;
   }
 
   Future<void> disconnect() async {
+    _alertTimer?.cancel();
+    _alertTimer = null;
+    _alertCharacteristic = null;
+    _currentAlerts.clear();
+    await _alertSubscription?.cancel();
+    _alertSubscription = null;
     _configCharacteristic = null;
     _timeCharacteristic = null;
     _historyCharacteristic = null;
@@ -408,25 +546,41 @@ class WatchBleService {
   Future<void> applyPreferences(UserPreferences preferences) async {
     final characteristic = _configCharacteristic;
     if (characteristic == null) {
-      throw StateError('El reloj necesita el firmware con configuracion personal.');
+      throw StateError(
+        'El reloj necesita el firmware con configuracion personal.',
+      );
     }
     final bytes = preferences.wire;
-    await characteristic.write(bytes, withoutResponse: false).timeout(const Duration(seconds: 5));
+    await characteristic
+        .write(bytes, withoutResponse: false)
+        .timeout(const Duration(seconds: 5));
     for (var attempt = 0; attempt < 20; attempt++) {
       await Future<void>.delayed(const Duration(milliseconds: 250));
-      if (_configCharacteristic != characteristic) throw StateError('Reloj desconectado.');
-      final confirmed = await characteristic.read().timeout(const Duration(seconds: 3));
-      if (confirmed.length == 5 && confirmed[4] == 0 &&
-          List.generate(4, (i) => confirmed[i] == bytes[i]).every((same) => same)) {
+      if (_configCharacteristic != characteristic) {
+        throw StateError('Reloj desconectado.');
+      }
+      final confirmed = await characteristic.read().timeout(
+        const Duration(seconds: 3),
+      );
+      if (confirmed.length == 5 &&
+          confirmed[4] == 0 &&
+          List.generate(
+            4,
+            (i) => confirmed[i] == bytes[i],
+          ).every((same) => same)) {
         return;
       }
     }
-    throw StateError('El reloj no confirmo el guardado. Reintentá la sincronizacion.');
+    throw StateError(
+      'El reloj no confirmo el guardado. Reintentá la sincronizacion.',
+    );
   }
 
   Future<bool> _requestPermissions() async {
     if (defaultTargetPlatform != TargetPlatform.android) return true;
-    final sdk = await const MethodChannel('nera/platform').invokeMethod<int>('androidSdk');
+    final sdk = await const MethodChannel(
+      'nera/platform',
+    ).invokeMethod<int>('androidSdk');
     if (sdk == null) return false;
     _androidSdk = sdk;
     // Android 12+ usa permisos BLE. En Android 11 o menor, el escaneo
@@ -447,5 +601,6 @@ class WatchBleService {
     await _stateController.close();
     await _messageController.close();
     await _historyController.close();
+    await _alertsController.close();
   }
 }
