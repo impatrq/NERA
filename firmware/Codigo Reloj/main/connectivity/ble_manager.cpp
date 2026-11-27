@@ -3,6 +3,7 @@
  * No publicar una métrica cuando sus muestras no son válidas. */
 #include "connectivity/ble_manager.h"
 #include "connectivity/user_alert_preferences.h"
+#include "connectivity/alert_delivery.h"
 
 #include <atomic>
 #include <math.h>
@@ -49,6 +50,11 @@ const ble_uuid128_t HISTORY_UUID = BLE_UUID128_INIT(
 const ble_uuid128_t HISTORY_CONTROL_UUID = BLE_UUID128_INIT(
     0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
     0x93, 0xf3, 0xa3, 0xb5, 0x07, 0x00, 0x40, 0x7e);
+const ble_uuid128_t ALERT_UUID = BLE_UUID128_INIT(
+    0x9e, 0xca, 0xdc, 0x24, 0x0e, 0xe5, 0xa9, 0xe0,
+    0x93, 0xf3, 0xa3, 0xb5, 0x08, 0x00, 0x40, 0x7e);
+std::atomic<bool> alert_subscribed{false};
+uint16_t alert_handle=0;
 
 std::atomic<bool> ready{false};
 std::atomic<bool> subscribed{false};
@@ -61,7 +67,7 @@ std::atomic<uint16_t> connection{BLE_HS_CONN_HANDLE_NONE};
 uint16_t data_handle = 0;
 uint16_t history_handle = 0;
 uint8_t address_type = 0;
-ble_gatt_chr_def characteristics[6] = {};
+ble_gatt_chr_def characteristics[7] = {};
 ble_gatt_svc_def services[2] = {};
 
 int data_access(uint16_t, uint16_t, ble_gatt_access_ctxt *ctxt, void *)
@@ -69,6 +75,15 @@ int data_access(uint16_t, uint16_t, ble_gatt_access_ctxt *ctxt, void *)
     // Solo notificaciones. La UI/app no escribe comandos en esta etapa.
     return ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR
         ? BLE_ATT_ERR_READ_NOT_PERMITTED : BLE_ATT_ERR_UNLIKELY;
+}
+
+int alert_access(uint16_t, uint16_t, ble_gatt_access_ctxt *ctxt, void *) {
+    if (ctxt->op!=BLE_GATT_ACCESS_OP_WRITE_CHR) return BLE_ATT_ERR_WRITE_NOT_PERMITTED;
+    if (OS_MBUF_PKTLEN(ctxt->om)!=NERA_LAB_SIZE) return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+    uint8_t bytes[NERA_LAB_SIZE]; nera_lab_packet receipt={};
+    if (os_mbuf_copydata(ctxt->om,0,sizeof(bytes),bytes)!=0 ||
+        !nera_lab_decode(bytes,sizeof(bytes),&receipt)) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+    return nera_delivery::receive(receipt,esp_timer_get_time()) ? 0 : BLE_ATT_ERR_VALUE_NOT_ALLOWED;
 }
 
 // FUNCIONAL: leer confirma la configuracion ya persistida y aplicada.
@@ -182,6 +197,8 @@ int start_advertising()
         switch (event->type) {
         case BLE_GAP_EVENT_CONNECT: {
             if (event->connect.status == 0) {
+                alert_subscribed.store(false);
+                nera_delivery::set_link(false);
                 connection.store(event->connect.conn_handle);
                 subscribed.store(false);
                 encrypted.store(false);
@@ -199,6 +216,8 @@ int start_advertising()
             return 0;
         }
         case BLE_GAP_EVENT_DISCONNECT:
+            alert_subscribed.store(false);
+            nera_delivery::set_link(false);
             subscribed.store(false);
             encrypted.store(false);
             history_subscribed.store(false);
@@ -208,6 +227,10 @@ int start_advertising()
             start_advertising();
             return 0;
         case BLE_GAP_EVENT_SUBSCRIBE:
+            if (event->subscribe.attr_handle==alert_handle) {
+                alert_subscribed.store(event->subscribe.cur_notify!=0);
+                nera_delivery::set_link(alert_subscribed.load() && encrypted.load());
+            }
             if (event->subscribe.attr_handle == data_handle) {
                 subscribed.store(event->subscribe.cur_notify != 0);
                 NERA_LOGI(NERA_TAG_BLE, "Notificaciones %s",
@@ -222,6 +245,7 @@ int start_advertising()
                 ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0 &&
                 desc.sec_state.encrypted;
             encrypted.store(secure);
+            nera_delivery::set_link(secure && alert_subscribed.load());
             NERA_LOGI(NERA_TAG_BLE, "Enlace cifrado: %s", secure ? "si" : "no");
             if (!secure) ble_gap_terminate(event->enc_change.conn_handle,
                                            BLE_ERR_REM_USER_CONN_TERM);
@@ -255,6 +279,8 @@ void on_sync()
 
 void on_reset(int reason)
 {
+    alert_subscribed.store(false);
+    nera_delivery::set_link(false);
     subscribed.store(false);
     encrypted.store(false);
     history_subscribed.store(false);
@@ -340,6 +366,11 @@ esp_err_t ble_manager_init(void)
     characteristics[4].access_cb = history_control_access;
     characteristics[4].flags = BLE_GATT_CHR_F_READ | BLE_GATT_CHR_F_WRITE |
         BLE_GATT_CHR_F_READ_ENC | BLE_GATT_CHR_F_WRITE_ENC;
+    characteristics[5].uuid=&ALERT_UUID.u;
+    characteristics[5].access_cb=alert_access;
+    characteristics[5].flags=BLE_GATT_CHR_F_NOTIFY | BLE_GATT_CHR_F_WRITE |
+        BLE_GATT_CHR_F_NOTIFY_INDICATE_ENC | BLE_GATT_CHR_F_WRITE_ENC;
+    characteristics[5].val_handle=&alert_handle;
     services[0].type = BLE_GATT_SVC_TYPE_PRIMARY;
     services[0].uuid = &SERVICE_UUID.u;
     services[0].characteristics = characteristics;
@@ -366,9 +397,21 @@ void ble_manager_task(void *arg)
     bool published_heart = false;
     bool published_spo2 = false;
     int64_t next_live_us = 0;
+    int64_t next_alert_us=0;
     while (true) {
         const uint16_t peer = connection.load();
         const int64_t now = esp_timer_get_time();
+        if (now>=next_alert_us && ready.load() && alert_subscribed.load() &&
+            encrypted.load() && peer!=BLE_HS_CONN_HANDLE_NONE) {
+            next_alert_us=now+500000;
+            for (unsigned metric=1;metric<=2;++metric) {
+                nera_lab_packet event={};
+                if (!nera_delivery::snapshot(metric,event)) continue;
+                uint8_t bytes[NERA_LAB_SIZE]; nera_lab_encode(bytes,&event);
+                os_mbuf *message=ble_hs_mbuf_from_flat(bytes,sizeof(bytes));
+                if (message) ble_gatts_notify_custom(peer,alert_handle,message);
+            }
+        }
         if (ready.load() && history_requested.load() && history_subscribed.load() &&
             encrypted.load() && peer != BLE_HS_CONN_HANDLE_NONE && history_handle != 0) {
             if (history_backfill_pending.exchange(false))
