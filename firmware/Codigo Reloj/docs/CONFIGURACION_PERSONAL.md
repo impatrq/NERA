@@ -2,7 +2,10 @@
 
 La app Android permite elegir avisos de prueba, sensibilidad y actividad desde
 Perfil. No detecta ansiedad ni selecciona limites medicos personalizados.
-No se habilita ningun actuador. No hay envio automatico a contactos.
+Actualización 26/11/2026: los avisos ahora pasan por la app antes de ordenar
+GPIO5 en la vincha. La app muestra recepción y confirmación del C3. Se requiere
+la app abierta y conectada. Ver [flujo actual](ALERTAS_LAB.md).
+No hay envio automatico a contactos.
 
 ## Comportamiento
 
@@ -19,8 +22,8 @@ No se habilita ningun actuador. No hay envio automatico a contactos.
   mantenerse si sigue siendo elegible. Pausar una regla activa envia su
   inactivacion con el estado INVALID existente, para conservar compatibilidad
   con el C3 (su log antiguo dice dato invalido/vencido tambien en este caso).
-- Los eventos siguen siendo de laboratorio, sin actuacion. No se incluyen
-  alertas/ACK en la app todavia: confirmar ajustes no significa confirmar C3.
+- Los eventos siguen siendo de laboratorio. Confirmar ajustes es distinto de
+  recibir el ACK de GPIO5, que ahora se muestra en «Alertas y vincha».
 
 ## Persistencia y sincronizacion
 

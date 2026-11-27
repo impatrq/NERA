@@ -8,6 +8,8 @@ void main() {
 
     expect(find.text('Sin lecturas reales'), findsOneWidget);
     expect(find.text('Reloj NERA'), findsOneWidget);
+    expect(find.text('Alertas y vincha'), findsOneWidget);
+    await tester.scrollUntilVisible(find.text('Señales principales'), 200);
     expect(find.text('Señales principales'), findsOneWidget);
     expect(find.text('76'), findsNothing);
     expect(find.text('Inicio'), findsOneWidget);

@@ -1,6 +1,6 @@
 /* NERA Vincha — prueba aislada de radio ESP-NOW para ESP32-C3.
  * FUNCIONAL: escucha balizas, muestra MAC y secuencia por monitor serial.
- * IMPORTANTE: GPIO5 genera una prueba continua de 15 Hz, SOLO SIN BOBINAS.
+ * GPIO5 apagado al inicio, activacion con orden vigente, timeout de 5 s.
  */
 #include <inttypes.h>
 #include <string.h>
@@ -9,12 +9,14 @@
 #include "esp_netif.h"
 #include "esp_now.h"
 #include "esp_wifi.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include "gpio5_signal_test.h"
 #include "../../Protocolo Reloj Vincha/nera_lab_protocol.h"
+#include "../../Protocolo Reloj Vincha/nera_output_state.h"
 
 static const char *TAG = "NERA/VINCHA";
 static const uint8_t CHANNEL = 1; // MODIFICABLE: igual que en el reloj.
@@ -47,22 +49,35 @@ static void log_received(void *arg)
 {
     (void)arg;
     diagnostic_packet_t packet;
-    nera_lab_packet last[2]={{0}};
-    uint8_t seen[2]={0};
-    while (xQueueReceive(received_queue, &packet, portMAX_DELAY) == pdTRUE) {
+    nera_output_state output={0};
+    while (true) {
+        const int was_on=nera_output_on(&output);
+        nera_output_expire(&output,esp_timer_get_time());
+        if (was_on && !nera_output_on(&output)) {
+            ESP_ERROR_CHECK(gpio5_signal_test_set_active(false));
+            ESP_LOGW(TAG,"ENLACE VENCIDO: GPIO5 apagado por falta de renovacion (5 s)");
+        }
+        if (xQueueReceive(received_queue, &packet, pdMS_TO_TICKS(100))!=pdTRUE) continue;
         if (packet.is_alert) {
             nera_lab_packet *event=&packet.alert;
             const unsigned index=event->metric-1;
-            const int duplicate=seen[index] && last[index].session==event->session &&
-                                event->id<=last[index].id;
+            const int duplicate=output.seen[index] && output.last[index].session==event->session &&
+                                event->id==output.last[index].id;
+            nera_output_state candidate=output;
+            if (!nera_output_receive(&candidate,event,esp_timer_get_time())) continue;
+            // Confirmar solamente DESPUES de aplicar la salida solicitada.
+            if (gpio5_signal_test_set_active(nera_output_on(&candidate))!=ESP_OK) {
+                ESP_LOGE(TAG,"GPIO5 ERROR: orden sin confirmar");
+                continue;
+            }
+            output=candidate;
             if (!duplicate) {
-                last[index]=*event; seen[index]=1;
                 const char *metric=event->metric==NERA_LAB_HEART ? "PULSO BPM" : "TEMPERATURA OBJETO C";
                 if (event->state==NERA_LAB_INVALID)
-                    ESP_LOGW(TAG,"ALERTA LAB INACTIVA por dato invalido/vencido: %s evento=%lu; solo registro",
+                    ESP_LOGW(TAG,"ALERTA INACTIVA por dato invalido/vencido: %s evento=%lu",
                              metric,(unsigned long)event->id);
                 else
-                    ESP_LOGW(TAG,"ALERTA LAB %s: %s valor=%.2f evento=%lu; solo registro",
+                    ESP_LOGW(TAG,"ALERTA %s: %s valor=%.2f evento=%lu",
                              event->state==NERA_LAB_ACTIVE ? "ACTIVA" : "RESTABLECIDA", metric,
                              event->centi_value/100.0,(unsigned long)event->id);
             }
@@ -81,8 +96,8 @@ static void log_received(void *arg)
                 nera_lab_encode(bytes,event);
                 result=esp_now_send(packet.source,bytes,sizeof(bytes));
             }
-            ESP_LOGI(TAG,"ACK LAB evento=%lu %s: %s",(unsigned long)event->id,
-                     duplicate ? "duplicado" : "nuevo",esp_err_to_name(result));
+            ESP_LOGI(TAG,"ACK GPIO5 evento=%lu %s salida=%s: %s",(unsigned long)event->id,
+                     duplicate ? "renovacion" : "nuevo",nera_output_on(&output) ? "ACTIVA" : "APAGADA",esp_err_to_name(result));
             continue;
         }
         ESP_LOGI(TAG, "Baliza recibida de %02X:%02X:%02X:%02X:%02X:%02X sec=%u",
@@ -94,7 +109,7 @@ static void log_received(void *arg)
 
 void app_main(void)
 {
-    // Arranca al alimentar el C3; no necesita reloj, enlace ni una alerta.
+    // Arrancar siempre apagado; no generar PWM hasta recibir una orden.
     ESP_ERROR_CHECK(gpio5_signal_test_start());
     esp_err_t err = nvs_flash_init();
     if (err != ESP_OK) {
@@ -121,7 +136,7 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_wifi_get_mac(WIFI_IF_STA, mac));
     ESP_LOGI(TAG, "Vincha C3 lista; MAC %02X:%02X:%02X:%02X:%02X:%02X canal %u",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], CHANNEL);
-    ESP_LOGI(TAG, "ALERTAS LAB V1 + ACK; GPIO5 PWM DE PRUEBA CONTINUO, SIN BOBINAS.");
+    ESP_LOGI(TAG, "FLUJO V3 + ACK GPIO5; apagado inicial; timeout 5 s");
     if (xTaskCreate(log_received, "nera_radio_log", 4096, NULL, 2, NULL) != pdPASS) {
         ESP_LOGE(TAG, "No se pudo crear la tarea de log");
     }

@@ -4,6 +4,7 @@ import 'models.dart';
 import 'nera_controller.dart';
 import 'watch_ble_service.dart';
 import 'user_preferences.dart';
+import 'watch_alert.dart';
 
 // FUNCIONAL: partes de la misma biblioteca; comparten los imports de este archivo.
 part 'screens/home_view.dart';
@@ -40,18 +41,47 @@ class NeraShell extends StatefulWidget {
   State<NeraShell> createState() => _NeraShellState();
 }
 
-class _NeraShellState extends State<NeraShell> {
+class _NeraShellState extends State<NeraShell> with WidgetsBindingObserver {
   int _selectedIndex = 0;
   late final NeraController _controller;
+  final Set<String> _shownAlerts = {};
 
   @override
   void initState() {
     super.initState();
     _controller = NeraController();
+    _controller.addListener(_announceDeviceAlerts);
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  void _announceDeviceAlerts() {
+    for (final alert in _controller.currentAlerts.values) {
+      if (!alert.active ||
+          (alert.phase != AlertDeliveryPhase.waitingApp &&
+              alert.phase != AlertDeliveryPhase.failed)) {
+        continue;
+      }
+      final key = '${alert.key}:${alert.phase.name}';
+      if (!_shownAlerts.add(key)) continue;
+      if (_shownAlerts.length > 200) _shownAlerts.remove(_shownAlerts.first);
+      final message = alert.phase == AlertDeliveryPhase.failed
+          ? '${alert.label}: la vincha no confirmó la orden.'
+          : 'Alerta: ${alert.label.toLowerCase()} ${alert.value}. Enviando a la vincha...';
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showSnack(message);
+      });
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _controller.setAppForeground(state == AppLifecycleState.resumed);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _controller.removeListener(_announceDeviceAlerts);
     _controller.dispose();
     super.dispose();
   }
@@ -72,7 +102,11 @@ class _NeraShellState extends State<NeraShell> {
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        icon: const Icon(Icons.notification_important, color: AppTheme.danger, size: 34),
+        icon: const Icon(
+          Icons.notification_important,
+          color: AppTheme.danger,
+          size: 34,
+        ),
         title: const Text('Alertas aún no disponibles'),
         content: const Text(
           'La app todavía no envía mensajes ni comparte tu ubicación. '
@@ -118,10 +152,7 @@ class _NeraShellState extends State<NeraShell> {
             onSendAlert: _sendEmergencyAlert,
             onShowSnack: _showSnack,
           ),
-          ProfileScreen(
-            controller: _controller,
-            onShowSnack: _showSnack,
-          ),
+          ProfileScreen(controller: _controller, onShowSnack: _showSnack),
         ];
 
         return Scaffold(
@@ -133,12 +164,13 @@ class _NeraShellState extends State<NeraShell> {
                   color: AppTheme.textDark.withOpacity(0.04),
                   blurRadius: 16,
                   offset: const Offset(0, -4),
-                )
+                ),
               ],
             ),
             child: NavigationBar(
               selectedIndex: _selectedIndex,
-              onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+              onDestinationSelected: (index) =>
+                  setState(() => _selectedIndex = index),
               backgroundColor: Colors.white,
               elevation: 0,
               height: 72,
@@ -151,7 +183,10 @@ class _NeraShellState extends State<NeraShell> {
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.monitor_heart_outlined),
-                  selectedIcon: Icon(Icons.monitor_heart, color: AppTheme.primary),
+                  selectedIcon: Icon(
+                    Icons.monitor_heart,
+                    color: AppTheme.primary,
+                  ),
                   label: 'Salud',
                 ),
                 NavigationDestination(
@@ -172,4 +207,3 @@ class _NeraShellState extends State<NeraShell> {
     );
   }
 }
-

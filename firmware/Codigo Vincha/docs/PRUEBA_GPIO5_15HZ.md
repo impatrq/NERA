@@ -1,5 +1,10 @@
 # Prueba GPIO5 sin bobinas — 18/11/2026
 
+Actualización 26/11/2026: el PWM ya no arranca continuamente. GPIO5 inicia
+alto y espera el flujo reloj -> app -> reloj -> vincha. Conserva 15 Hz y
+2,5 ms bajos, con timeout de enlace. Ver [flujo y prueba actual](ALERTAS_LAB.md).
+La descripción de arranque continuo que sigue documenta la versión anterior.
+
 Prueba actual: PWM de 15 Hz restaurado tras la prueba temporal de nivel bajo
 fijo, a pedido del usuario. El tiempo activo se redujo de 5 ms a 2,5 ms.
 

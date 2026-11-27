@@ -6,6 +6,7 @@ import 'app_theme.dart';
 import 'user_preferences.dart';
 import 'watch_history.dart';
 import 'watch_history_store.dart';
+import 'watch_alert.dart';
 
 class NeraController extends ChangeNotifier {
   final WatchBleService _watchService;
@@ -55,30 +56,88 @@ class NeraController extends ChangeNotifier {
   final List<EmergencyContact> contacts = [];
 
   final List<AlertEvent> events = [];
+  final Map<int, WatchAlert> currentAlerts = {};
+  final Map<int, DateTime> _alertAt = {};
+  final Set<String> _alertNotices = {};
+  String alertStatus = 'Esperando alertas del reloj. Mantené la app abierta.';
+  List<String> get alertStatuses => currentAlerts.isEmpty
+      ? [alertStatus]
+      : currentAlerts.values.map(_describeAlert).toList();
+
+  void setAppForeground(bool foreground) {
+    _watchService.setForeground(foreground);
+    if (!foreground) {
+      currentAlerts.clear();
+      _alertAt.clear();
+      alertStatus = 'App en segundo plano: activación suspendida.';
+      notifyListeners();
+    }
+  }
+
+  void _applyAlert(WatchAlert alert) {
+    currentAlerts[alert.metric] = alert;
+    _alertAt[alert.metric] = _now();
+    alertStatus = _describeAlert(alert);
+    final noticeKey = '${alert.key}:${alert.phase.name}';
+    if (_alertNotices.add(noticeKey)) {
+      if (_alertNotices.length > 200) _alertNotices.remove(_alertNotices.first);
+      events.insert(
+        0,
+        AlertEvent(
+          title: alert.active
+              ? 'Alerta de ${alert.label.toLowerCase()}'
+              : 'Fin de alerta',
+          description: alertStatus,
+          time: _now(),
+          color: alert.phase == AlertDeliveryPhase.confirmed
+              ? AppTheme.success
+              : AppTheme.danger,
+          icon: Icons.notifications_active_outlined,
+        ),
+      );
+      if (events.length > 100) events.removeLast();
+    }
+    notifyListeners();
+  }
+
+  String _describeAlert(WatchAlert alert) =>
+      '${alert.label}: ${alert.active ? alert.value : "condición finalizada"}. ${switch (alert.phase) {
+        AlertDeliveryPhase.waitingApp => "Alerta recibida en la app; preparando envío.",
+        AlertDeliveryPhase.sending => "Esperando confirmación de la vincha...",
+        AlertDeliveryPhase.confirmed => alert.active ? "Vincha confirmó GPIO5 activado." : "Vincha confirmó el fin de esta alerta.",
+        AlertDeliveryPhase.failed => "Sin confirmación de la vincha. Revisá alimentación y enlace.",
+      }}';
 
   final List<double> _movementHistory = [];
   static const int _smoothingWindow = 5;
 
-  NeraController({UserPreferencesStore? preferencesStore, WatchBleService? watchService,
-      WatchHistoryStore? historyStore, DateTime Function()? now})
-      : _preferencesStore = preferencesStore ?? UserPreferencesStore(),
-        _historyStore = historyStore ?? WatchHistoryStore(),
-        _watchService = watchService ?? WatchBleService(),
-        _now = now ?? DateTime.now {
+  NeraController({
+    UserPreferencesStore? preferencesStore,
+    WatchBleService? watchService,
+    WatchHistoryStore? historyStore,
+    DateTime Function()? now,
+  }) : _preferencesStore = preferencesStore ?? UserPreferencesStore(),
+       _historyStore = historyStore ?? WatchHistoryStore(),
+       _watchService = watchService ?? WatchBleService(),
+       _now = now ?? DateTime.now {
     _preferencesLoaded = _loadPreferences();
     _historyLoaded = _loadHistory();
     _init();
   }
 
-  List<WatchHistoryEntry> get latestHistory => history.reversed.take(20).toList();
+  List<WatchHistoryEntry> get latestHistory =>
+      history.reversed.take(20).toList();
 
   Future<void> _loadHistory() async {
     try {
       final saved = await _historyStore.load();
       if (_disposed) return;
-      for (final entry in saved.entries) { _mergeHistory(entry, save: false); }
-      historyStatus = history.isEmpty ? 'Aún no hay muestras guardadas.' :
-          '${history.length} muestras en el historial.';
+      for (final entry in saved.entries) {
+        _mergeHistory(entry, save: false);
+      }
+      historyStatus = history.isEmpty
+          ? 'Aún no hay muestras guardadas.'
+          : '${history.length} muestras en el historial.';
     } catch (_) {
       if (_disposed) return;
       historyStatus = 'No se pudo abrir el historial local.';
@@ -125,8 +184,10 @@ class NeraController extends ChangeNotifier {
     if (_disposed || watchState != WatchConnectionState.connected) return;
     final last = history.isEmpty ? null : history.last;
     try {
-      await _watchService.requestHistory(knownGeneration: last?.generation ?? 0,
-          lastSequence: last?.sequence ?? 0);
+      await _watchService.requestHistory(
+        knownGeneration: last?.generation ?? 0,
+        lastSequence: last?.sequence ?? 0,
+      );
     } catch (_) {
       if (_disposed) return;
       historyStatus = 'No se pudo sincronizar el historial del reloj.';
@@ -134,9 +195,14 @@ class NeraController extends ChangeNotifier {
     }
   }
 
-  UserPreferences get userPreferences => UserPreferences(alerts: automaticAlerts,
-      sensitivity: sensitivity, activity: activityMode, name: name, email: email,
-      contacts: List.of(contacts));
+  UserPreferences get userPreferences => UserPreferences(
+    alerts: automaticAlerts,
+    sensitivity: sensitivity,
+    activity: activityMode,
+    name: name,
+    email: email,
+    contacts: List.of(contacts),
+  );
 
   Future<void> _loadPreferences() async {
     try {
@@ -149,10 +215,12 @@ class NeraController extends ChangeNotifier {
       email = saved.email;
       contacts.addAll(saved.contacts);
       preferencesReady = true;
-      preferencesStatus = 'Preferencias cargadas. Guardado local en este teléfono.';
+      preferencesStatus =
+          'Preferencias cargadas. Guardado local en este teléfono.';
     } catch (_) {
       if (_disposed) return;
-      preferencesStatus = 'No se pudieron cargar las preferencias. Cerrá y abrí la app para reintentar.';
+      preferencesStatus =
+          'No se pudieron cargar las preferencias. Cerrá y abrí la app para reintentar.';
     }
     notifyListeners();
   }
@@ -172,7 +240,8 @@ class NeraController extends ChangeNotifier {
         }
       } catch (_) {
         if (_disposed || version != _preferencesRevision) return;
-        preferencesStatus = 'No se pudo guardar. Usá Reintentar guardado y sincronización.';
+        preferencesStatus =
+            'No se pudo guardar. Usá Reintentar guardado y sincronización.';
       }
       if (!_disposed) notifyListeners();
     });
@@ -202,36 +271,72 @@ class NeraController extends ChangeNotifier {
   }
 
   void _init() {
-    _subscriptions.add(_watchService.state.listen((state) {
-      watchState = state;
-      if (state != WatchConnectionState.connected) {
-        _clearCurrentReading();
-        if (history.isNotEmpty) unawaited(_saveHistory());
-        watchPreferencesStatus = 'Sin conexión. El reloj conserva los últimos ajustes confirmados.';
-      } else {
-        unawaited(syncPreferences());
-        unawaited(_syncHistory());
-      }
-      notifyListeners();
-    }));
+    _subscriptions.add(
+      _watchService.state.listen((state) {
+        watchState = state;
+        if (state != WatchConnectionState.connected) {
+          currentAlerts.clear();
+          _alertAt.clear();
+          alertStatus = 'Sin conexión: estado de la vincha sin confirmar.';
+          _clearCurrentReading();
+          if (history.isNotEmpty) unawaited(_saveHistory());
+          watchPreferencesStatus =
+              'Sin conexión. El reloj conserva los últimos ajustes confirmados.';
+        } else {
+          unawaited(syncPreferences());
+          unawaited(_syncHistory());
+        }
+        notifyListeners();
+      }),
+    );
 
-    _subscriptions.add(_watchService.messages.listen((message) {
-      watchMessage = message;
-      notifyListeners();
-    }));
+    _subscriptions.add(
+      _watchService.messages.listen((message) {
+        watchMessage = message;
+        notifyListeners();
+      }),
+    );
 
     _subscriptions.add(_watchService.readings.listen(_applyWatchReading));
-    _subscriptions.add(_watchService.history.listen((entry) {
-      _mergeHistory(entry);
-    }));
+    _subscriptions.add(_watchService.alerts.listen(_applyAlert));
+    _subscriptions.add(
+      _watchService.history.listen((entry) {
+        _mergeHistory(entry);
+      }),
+    );
     _staleTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       final now = _now();
-      bool expired(DateTime? at) => at != null &&
-          now.difference(at) > const Duration(seconds: 5);
+      bool expired(DateTime? at) =>
+          at != null && now.difference(at) > const Duration(seconds: 5);
       var changed = false;
-      if (expired(_heartAt)) { heartRate = null; _heartAt = null; changed = true; }
-      if (expired(_oxygenAt)) { oxygen = null; _oxygenAt = null; changed = true; }
-      if (expired(_temperatureAt)) { temperature = null; _temperatureAt = null; changed = true; }
+      final staleAlerts = _alertAt.entries
+          .where(
+            (entry) => now.difference(entry.value) > const Duration(seconds: 3),
+          )
+          .map((entry) => entry.key)
+          .toList();
+      for (final metric in staleAlerts) {
+        _alertAt.remove(metric);
+        currentAlerts.remove(metric);
+        alertStatus =
+            'Estado de la vincha vencido; esperando una confirmación nueva.';
+        changed = true;
+      }
+      if (expired(_heartAt)) {
+        heartRate = null;
+        _heartAt = null;
+        changed = true;
+      }
+      if (expired(_oxygenAt)) {
+        oxygen = null;
+        _oxygenAt = null;
+        changed = true;
+      }
+      if (expired(_temperatureAt)) {
+        temperature = null;
+        _temperatureAt = null;
+        changed = true;
+      }
       if (expired(_movementAt)) {
         movement = null;
         _movementAt = null;
@@ -249,8 +354,12 @@ class NeraController extends ChangeNotifier {
   }
 
   void _refreshLastReadingAt() {
-    final times = [_heartAt, _oxygenAt, _temperatureAt, _movementAt]
-        .whereType<DateTime>().toList();
+    final times = [
+      _heartAt,
+      _oxygenAt,
+      _temperatureAt,
+      _movementAt,
+    ].whereType<DateTime>().toList();
     times.sort();
     lastReadingAt = times.isEmpty ? null : times.last;
   }
@@ -289,14 +398,16 @@ class NeraController extends ChangeNotifier {
         if (_movementHistory.length > _smoothingWindow) {
           _movementHistory.removeAt(0);
         }
-        movement = _movementHistory.reduce((a, b) => a + b) / _movementHistory.length;
+        movement =
+            _movementHistory.reduce((a, b) => a + b) / _movementHistory.length;
         _movementAt = reading.receivedAt;
       }
     }
     _refreshLastReadingAt();
 
     final values = <String>[
-      if (reading.hasHeartRate && reading.heartRate != null) 'pulso $heartRate bpm',
+      if (reading.hasHeartRate && reading.heartRate != null)
+        'pulso $heartRate bpm',
       if (reading.hasSpo2 && reading.spo2 != null) 'SpO2 $oxygen%',
       if (reading.hasTemperature && reading.temperature != null)
         'objeto IR ${temperature!.toStringAsFixed(1)} °C',

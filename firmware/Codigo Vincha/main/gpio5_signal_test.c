@@ -6,6 +6,7 @@
 #include "esp_log.h"
 
 static const char *TAG = "NERA/GPIO5_TEST";
+static bool output_active=false;
 
 // MODIFICABLE: parametros de la prueba de senal SIN bobinas.
 #define TEST_GPIO GPIO_NUM_5
@@ -43,19 +44,32 @@ esp_err_t gpio5_signal_test_start(void)
     };
     ESP_RETURN_ON_ERROR(ledc_timer_config(&timer), TAG, "Configurar timer LEDC");
 
+    ESP_LOGI(TAG,"GPIO5 APAGADO; esperando orden posterior a confirmacion de la app");
+    return ESP_OK;
+}
+
+esp_err_t gpio5_signal_test_set_active(bool active)
+{
+    if (active==output_active) return ESP_OK;
+    if (!active) {
+        ESP_RETURN_ON_ERROR(ledc_stop(LEDC_LOW_SPEED_MODE,LEDC_CHANNEL_0,1),TAG,"Apagar GPIO5");
+        output_active=false;
+        ESP_LOGW(TAG,"GPIO5 APAGADO (alto)");
+        return ESP_OK;
+    }
     const ledc_channel_config_t channel = {
         .gpio_num = TEST_GPIO,
         .speed_mode = LEDC_LOW_SPEED_MODE,
         .channel = LEDC_CHANNEL_0,
         .timer_sel = LEDC_TIMER_0,
-        .duty = TEST_ACTIVE_TICKS,
+        .duty = TEST_PERIOD_TICKS-TEST_ACTIVE_TICKS,
         .hpoint = 0,
-        .flags.output_invert = 1,
+        .flags.output_invert = 0,
     };
     ESP_RETURN_ON_ERROR(ledc_channel_config(&channel), TAG, "Configurar PWM GPIO5");
 
-    ESP_LOGW(TAG, "PRUEBA CONTINUA SIN BOBINAS: GPIO5, %lu Hz, activo BAJO ~2.5 ms, alto ~64.17 ms",
+    output_active=true;
+    ESP_LOGW(TAG, "GPIO5 ACTIVADO: %lu Hz, activo BAJO ~2.5 ms, alto ~64.17 ms",
              (unsigned long)ledc_get_freq(LEDC_LOW_SPEED_MODE, LEDC_TIMER_0));
-    ESP_LOGW(TAG, "PWM independiente del reloj y de las alertas ESP-NOW; no conectar bobinas");
     return ESP_OK;
 }

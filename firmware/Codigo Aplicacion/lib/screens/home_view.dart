@@ -41,6 +41,47 @@ class HomeScreen extends StatelessWidget {
           onConnect: controller.connectWatch,
         ),
         const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.notifications_active_outlined,
+                  color: AppTheme.primary,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Alertas y vincha',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 6),
+                      for (final status in controller.alertStatuses)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Text(status),
+                        ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'La confirmación verifica la orden de GPIO5; no mide la bobina.',
+                        style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
         const SectionTitle(title: 'Señales principales'),
         const SizedBox(height: 12),
         MetricGrid(
@@ -59,7 +100,8 @@ class HomeScreen extends StatelessWidget {
               unit: '%',
               icon: Icons.air,
               color: AppTheme.success,
-              detail: 'Estimación experimental del MAX30102; requiere dedo quieto. Sin calibración clínica.',
+              detail:
+                  'Estimación experimental del MAX30102; requiere dedo quieto. Sin calibración clínica.',
             ),
             MetricData(
               title: 'Estrés',
@@ -75,7 +117,8 @@ class HomeScreen extends StatelessWidget {
               unit: '°C',
               icon: Icons.thermostat,
               color: const Color(0xFFEC4899),
-              detail: 'Objeto IR del MLX90614: apuntar sin apoyar el sensor. No es temperatura corporal central.',
+              detail:
+                  'Objeto IR del MLX90614: apuntar sin apoyar el sensor. No es temperatura corporal central.',
             ),
           ],
         ),
@@ -83,4 +126,3 @@ class HomeScreen extends StatelessWidget {
     );
   }
 }
-
