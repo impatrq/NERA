@@ -1,3 +1,4 @@
+#include "../../Protocolo Reloj Vincha/nera_output_state.h"
 #include "../../Protocolo Reloj Vincha/nera_delivery_state.h"
 #include "../../Protocolo Reloj Vincha/nera_lab_protocol.h"
 #include "../main/connectivity/lab_alert_rules.h"
@@ -83,3 +84,28 @@ constexpr bool delivery_test() {
     return !state.receive(event,2000000);
 }
 static_assert(delivery_test(),"No activation before app receipt; expiry, reconnect, replaced and failed events");
+
+constexpr bool output_test() {
+    nera_output_state s={};
+    nera_lab_packet heart={NERA_LAB_ALERT,1,NERA_LAB_ACTIVE,12,1,11000};
+    if (nera_output_on(&s) || !nera_output_receive(&s,&heart,1000000) || !nera_output_on(&s)) return false;
+    // Duplicados vigentes renuevan la concesion, sin alternar la salida.
+    if (!nera_output_receive(&s,&heart,2000000)) return false;
+    nera_output_expire(&s,6999999); if (!nera_output_on(&s)) return false;
+    nera_output_expire(&s,7000000); if (nera_output_on(&s)) return false;
+    if (nera_output_receive(&s,&heart,7100000)) return false; // no reactivar duplicado vencido
+    heart.id=2;
+    if (!nera_output_receive(&s,&heart,8000000)) return false;
+    nera_lab_packet temp={NERA_LAB_ALERT,2,NERA_LAB_ACTIVE,12,3,3400};
+    if (!nera_output_receive(&s,&temp,8000000)) return false;
+    heart.id=4; heart.state=NERA_LAB_CLEAR;
+    if (!nera_output_receive(&s,&heart,9000000) || !nera_output_on(&s)) return false; // OR
+    temp.id=5; temp.state=NERA_LAB_INVALID;
+    if (!nera_output_receive(&s,&temp,9000000) || nera_output_on(&s)) return false;
+    heart.id=2; heart.state=NERA_LAB_ACTIVE;
+    if (nera_output_receive(&s,&heart,9100000) || nera_output_on(&s)) return false; // viejo
+    heart.session=13; heart.id=1;
+    if (!nera_output_receive(&s,&heart,10000000) || !nera_output_on(&s)) return false;
+    return !s.active[1];
+}
+static_assert(output_test(),"Output off at boot, OR, renewal, expiry, stale and duplicate rejection");
