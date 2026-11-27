@@ -50,7 +50,7 @@ constexpr bool protocol_test() {
         output.id!=9 || output.centi_value!=-1234 || output.state!=NERA_LAB_ACTIVE) return false;
     if (nera_lab_decode(bytes,sizeof(bytes)-1,&output)) return false;
     bytes[4]=1; if (nera_lab_decode(bytes,sizeof(bytes),&output)) return false;
-    bytes[4]=2; bytes[6]=3; if (nera_lab_decode(bytes,sizeof(bytes),&output)) return false;
+    bytes[4]=3; bytes[6]=3; if (nera_lab_decode(bytes,sizeof(bytes),&output)) return false;
     bytes[6]=1; bytes[7]=9; if (nera_lab_decode(bytes,sizeof(bytes),&output)) return false;
     return true;
 }
